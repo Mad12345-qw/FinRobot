@@ -409,12 +409,14 @@ def parse_feishu_report_request(text: str) -> Optional[AnalysisRequest]:
     clean_text = re.sub(r"<at[^>]*>.*?</at>", "", text or "", flags=re.IGNORECASE).strip()
     lower_text = clean_text.lower()
 
+    has_report_prefix = False
     for prefix in ("/report", "report"):
         if lower_text.startswith(prefix):
             clean_text = clean_text[len(prefix):].strip()
+            has_report_prefix = True
             break
 
-    if not clean_text or lower_text in {"/help", "help"}:
+    if not has_report_prefix or not clean_text or lower_text in {"/help", "help"}:
         return None
 
     command_parts = [part.strip() for part in clean_text.split("|", 1)]
@@ -471,12 +473,20 @@ async def reply_feishu_message(message_id: Optional[str], text: str):
             return
 
         async with httpx.AsyncClient(timeout=10.0) as client:
-            await client.post(
+            response = await client.post(
                 f"https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/reply",
-                params={"message_type": "text"},
                 headers={"Authorization": f"Bearer {token}"},
-                json={"content": json.dumps({"text": text}, ensure_ascii=False)},
+                json={
+                    "msg_type": "text",
+                    "content": json.dumps({"text": text}, ensure_ascii=False),
+                },
             )
+            if response.status_code >= 400:
+                logger.warning(
+                    "Feishu reply failed: status=%s body=%s",
+                    response.status_code,
+                    response.text[:1000],
+                )
     except Exception as e:
         logger.warning(f"Failed to reply to Feishu message: {e}")
 
