@@ -9,6 +9,7 @@ import hashlib
 import secrets
 import configparser
 import re
+import csv
 import httpx
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict
@@ -376,6 +377,7 @@ tasks = {}
 FEISHU_APP_ID = os.getenv("FEISHU_APP_ID", "")
 FEISHU_APP_SECRET = os.getenv("FEISHU_APP_SECRET", "")
 FEISHU_VERIFICATION_TOKEN = os.getenv("FEISHU_VERIFICATION_TOKEN", "")
+FEISHU_DOC_BASE_URL = os.getenv("FEISHU_DOC_BASE_URL", "https://feishu.cn/docx")
 PUBLIC_BASE_URL = os.getenv("FINROBOT_PUBLIC_URL") or os.getenv("RENDER_EXTERNAL_URL", "")
 
 class AnalysisRequest(BaseModel):
@@ -444,7 +446,7 @@ def parse_feishu_report_request(text: str) -> Optional[AnalysisRequest]:
         company_name=company_name,
         peers=peers,
         generate_text=True,
-        generate_pdf=True,
+        generate_pdf=False,
     )
 
 
@@ -500,13 +502,220 @@ def extract_feishu_text(message: Dict) -> str:
     return content_data.get("text", "")
 
 
-def start_feishu_task(req: AnalysisRequest) -> str:
+def get_feishu_tenant_access_token_sync() -> Optional[str]:
+    if not FEISHU_APP_ID or not FEISHU_APP_SECRET:
+        return None
+
+    with httpx.Client(timeout=15.0) as client:
+        response = client.post(
+            "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+            json={"app_id": FEISHU_APP_ID, "app_secret": FEISHU_APP_SECRET},
+        )
+        response.raise_for_status()
+        return response.json().get("tenant_access_token")
+
+
+def reply_feishu_message_sync(message_id: Optional[str], text: str):
+    if not message_id:
+        return
+
+    try:
+        token = get_feishu_tenant_access_token_sync()
+        if not token:
+            logger.warning("Feishu credentials are not configured; skipped message reply.")
+            return
+
+        with httpx.Client(timeout=15.0) as client:
+            response = client.post(
+                f"https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/reply",
+                headers={"Authorization": f"Bearer {token}"},
+                json={
+                    "msg_type": "text",
+                    "content": json.dumps({"text": text}, ensure_ascii=False),
+                },
+            )
+            if response.status_code >= 400:
+                logger.warning(
+                    "Feishu sync reply failed: status=%s body=%s",
+                    response.status_code,
+                    response.text[:1000],
+                )
+    except Exception as e:
+        logger.warning(f"Failed to sync reply to Feishu message: {e}")
+
+
+def read_text_file(path: str) -> str:
+    if not os.path.exists(path):
+        return ""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception as e:
+        logger.warning(f"Failed to read text file {path}: {e}")
+        return ""
+
+
+def read_metric_summary(csv_path: str, limit: int = 12) -> List[str]:
+    if not os.path.exists(csv_path):
+        return []
+
+    rows = []
+    try:
+        with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                metric = row.get("metrics")
+                if not metric:
+                    continue
+                values = [
+                    f"{key}: {value}"
+                    for key, value in row.items()
+                    if key != "metrics" and value not in (None, "")
+                ]
+                rows.append(f"{metric} | " + " | ".join(values[:6]))
+                if len(rows) >= limit:
+                    break
+    except Exception as e:
+        logger.warning(f"Failed to read metric summary {csv_path}: {e}")
+    return rows
+
+
+def feishu_text_block(content: str, bold: bool = False) -> Dict:
+    return {
+        "block_type": 2,
+        "text": {
+            "elements": [
+                {
+                    "text_run": {
+                        "content": content[:1800],
+                        "text_element_style": {"bold": bold},
+                    }
+                }
+            ],
+            "style": {},
+        },
+    }
+
+
+def split_paragraphs(text: str, max_len: int = 1200) -> List[str]:
+    text = re.sub(r"\n{3,}", "\n\n", text or "").strip()
+    if not text:
+        return []
+
+    paragraphs = []
+    for raw in text.split("\n\n"):
+        raw = raw.strip()
+        if not raw:
+            continue
+        while len(raw) > max_len:
+            paragraphs.append(raw[:max_len])
+            raw = raw[max_len:].strip()
+        if raw:
+            paragraphs.append(raw)
+    return paragraphs
+
+
+def add_doc_section(blocks: List[Dict], title: str, body: str):
+    blocks.append(feishu_text_block(title, bold=True))
+    paragraphs = split_paragraphs(body)
+    if not paragraphs:
+        paragraphs = ["暂无可用内容。"]
+    for paragraph in paragraphs[:6]:
+        blocks.append(feishu_text_block(paragraph))
+
+
+def build_chinese_report_blocks(req: AnalysisRequest, analysis_output_dir: str, report_output_dir: str) -> List[Dict]:
+    sections = {
+        "核心结论": read_text_file(os.path.join(analysis_output_dir, "major_takeaways.txt")),
+        "投资观点": read_text_file(os.path.join(analysis_output_dir, "investment_overview.txt")),
+        "公司概览": read_text_file(os.path.join(analysis_output_dir, "company_overview.txt")),
+        "财务表现分析": read_text_file(os.path.join(analysis_output_dir, "tagline.txt")),
+        "估值分析": read_text_file(os.path.join(analysis_output_dir, "valuation_overview.txt")),
+        "同行公司比较": read_text_file(os.path.join(analysis_output_dir, "competitor_analysis.txt")),
+        "主要风险": read_text_file(os.path.join(analysis_output_dir, "risks.txt")),
+        "新闻与催化因素": read_text_file(os.path.join(analysis_output_dir, "news_summary.txt")),
+    }
+    metric_rows = read_metric_summary(os.path.join(analysis_output_dir, "financial_metrics_and_forecasts.csv"))
+    if metric_rows:
+        sections["关键财务指标"] = "\n".join(f"• {row}" for row in metric_rows)
+
+    html_files = []
+    if os.path.exists(report_output_dir):
+        html_files = [f for f in os.listdir(report_output_dir) if f.endswith(".html")]
+    if html_files:
+        report_link = public_url(f"/output/{req.ticker}/report/{html_files[0]}")
+        sections["在线报告链接"] = report_link
+
+    blocks = [
+        feishu_text_block(f"{req.company_name}（{req.ticker}）股票研究报告", bold=True),
+        feishu_text_block(
+            "本报告由 FinRobot 自动生成，数据来自 FMP，文本由接入模型生成。内容仅供投研参考，不构成投资建议。"
+        ),
+    ]
+    for title, body in sections.items():
+        add_doc_section(blocks, title, body)
+    return blocks
+
+
+def create_feishu_document(title: str, blocks: List[Dict], chat_id: Optional[str] = None) -> Dict:
+    token = get_feishu_tenant_access_token_sync()
+    if not token:
+        raise RuntimeError("Feishu credentials are not configured.")
+
+    headers = {"Authorization": f"Bearer {token}"}
+    with httpx.Client(timeout=30.0) as client:
+        create_response = client.post(
+            "https://open.feishu.cn/open-apis/docx/v1/documents",
+            headers=headers,
+            json={"title": title},
+        )
+        create_response.raise_for_status()
+        create_data = create_response.json()
+        if create_data.get("code") != 0:
+            raise RuntimeError(f"Feishu document create failed: {create_data}")
+
+        document_id = create_data["data"]["document"]["document_id"]
+        for start in range(0, len(blocks), 20):
+            chunk = blocks[start:start + 20]
+            block_response = client.post(
+                f"https://open.feishu.cn/open-apis/docx/v1/documents/{document_id}/blocks/{document_id}/children",
+                headers=headers,
+                json={"children": chunk},
+            )
+            block_response.raise_for_status()
+            block_data = block_response.json()
+            if block_data.get("code") != 0:
+                raise RuntimeError(f"Feishu document block create failed: {block_data}")
+
+        if chat_id:
+            perm_response = client.post(
+                f"https://open.feishu.cn/open-apis/drive/v1/permissions/{document_id}/members",
+                params={"type": "docx"},
+                headers=headers,
+                json={"member_type": "openchat", "member_id": chat_id, "perm": "view"},
+            )
+            if perm_response.status_code >= 400:
+                logger.warning(
+                    "Feishu document permission failed: status=%s body=%s",
+                    perm_response.status_code,
+                    perm_response.text[:1000],
+                )
+
+    return {
+        "document_id": document_id,
+        "url": f"{FEISHU_DOC_BASE_URL.rstrip('/')}/{document_id}",
+    }
+
+
+def start_feishu_task(req: AnalysisRequest, message_id: Optional[str] = None, chat_id: Optional[str] = None) -> str:
     task_id = str(uuid.uuid4())
     tasks[task_id] = {
         "status": "pending",
         "logs": [],
         "result": None,
         "user": "feishu",
+        "feishu_message_id": message_id,
+        "feishu_chat_id": chat_id,
     }
     write_log_to_file(task_id, "Task created by Feishu bot")
     write_log_to_file(task_id, f"Ticker: {req.ticker}, Company: {req.company_name}")
@@ -544,17 +753,19 @@ async def feishu_events(payload: Dict, background_tasks: BackgroundTasks):
     if not req:
         await reply_feishu_message(
             message_id,
-            "Send: /report AAPL Apple Inc | MSFT GOOGL\n"
-            "The part after | is optional peer tickers.",
+            "请发送：/report AAPL Apple Inc | MSFT GOOGL\n"
+            "竖线后面是可选的同行股票代码。报告完成后会生成中文飞书文档并回传链接。",
         )
         return {"success": True, "ignored": "unsupported command"}
 
-    task_id = start_feishu_task(req)
-    background_tasks.add_task(execute_analysis_pipeline, task_id, req)
+    chat_id = message.get("chat_id")
+    task_id = start_feishu_task(req, message_id=message_id, chat_id=chat_id)
+    background_tasks.add_task(execute_feishu_analysis_pipeline, task_id, req, message_id, chat_id)
     status_link = public_url(f"/api/feishu/status/{task_id}")
     await reply_feishu_message(
         message_id,
-        f"Started FinRobot report for {req.ticker}. Task ID: {task_id}\nStatus: {status_link}",
+        f"已开始生成 {req.company_name}（{req.ticker}）中文投研文档。\n"
+        f"任务 ID：{task_id}\n状态：{status_link}",
     )
     return {"success": True, "task_id": task_id}
 
@@ -791,6 +1002,49 @@ def execute_analysis_pipeline(task_id: str, req: AnalysisRequest):
         "html": sorted_htmls,
         "pdf": sorted_pdfs
     }
+
+
+def execute_feishu_analysis_pipeline(
+    task_id: str,
+    req: AnalysisRequest,
+    message_id: Optional[str] = None,
+    chat_id: Optional[str] = None,
+):
+    execute_analysis_pipeline(task_id, req)
+
+    task = tasks.get(task_id, {})
+    if task.get("status") != "completed":
+        reply_feishu_message_sync(
+            message_id,
+            f"{req.company_name}（{req.ticker}）投研文档生成失败。\n"
+            f"任务 ID：{task_id}\n"
+            f"请查看状态：{public_url(f'/api/feishu/status/{task_id}')}",
+        )
+        return
+
+    try:
+        analysis_output_dir = os.path.join(OUTPUT_DIR, req.ticker, "analysis")
+        report_output_dir = os.path.join(OUTPUT_DIR, req.ticker, "report")
+        title = f"{req.company_name}（{req.ticker}）股票研究报告"
+        blocks = build_chinese_report_blocks(req, analysis_output_dir, report_output_dir)
+        doc = create_feishu_document(title, blocks, chat_id=chat_id)
+
+        task.setdefault("result", {})
+        task["result"]["feishu_doc"] = doc
+        append_task_log(task_id, f"Created Feishu document: {doc['url']}")
+        reply_feishu_message_sync(
+            message_id,
+            f"{req.company_name}（{req.ticker}）中文投研文档已生成：\n{doc['url']}\n"
+            f"文档 ID：{doc['document_id']}",
+        )
+    except Exception as e:
+        logger.warning(f"Failed to create Feishu document: {e}")
+        append_task_log(task_id, f"Failed to create Feishu document: {e}")
+        reply_feishu_message_sync(
+            message_id,
+            f"{req.company_name}（{req.ticker}）报告已生成，但创建飞书文档失败：{e}\n"
+            f"状态：{public_url(f'/api/feishu/status/{task_id}')}",
+        )
 
 @app.post("/api/run")
 async def run_analysis(req: AnalysisRequest, request: Request, background_tasks: BackgroundTasks):

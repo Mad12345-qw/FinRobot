@@ -11,28 +11,28 @@ from modules.retail_sentiment_client import format_retail_sentiment_for_prompt
 def _get_fallback_text(prompt_type: str, company_name: str) -> str:
     """Returns fallback text when agent generation fails."""
     fallbacks = {
-        "tagline": f"{company_name} demonstrates strong financial fundamentals with consistent revenue growth and solid profitability metrics. The company maintains a competitive position in its market segment through operational efficiency and strategic initiatives. Strong balance sheet metrics support continued value creation for shareholders.",
-        "company_overview": f"{company_name} operates as a prominent player in its industry sector, demonstrating consistent financial performance through strategic market positioning and operational excellence. The company has shown resilient growth patterns supported by strong demand dynamics and effective cost management strategies.",
-        "investment_overview": f"{company_name} has delivered solid financial performance in recent periods, supported by strong operational execution and favorable market conditions. Revenue growth has been driven by robust demand and strategic initiatives, while margin improvements reflect operational efficiency gains.",
-        "valuation_overview": f"{company_name} trades at reasonable valuation levels relative to its peer group, supported by strong fundamental metrics and growth prospects. The company's financial profile demonstrates consistent profitability and cash generation capabilities.",
-        "risks": "Key risks include: (1) Industry competition and market share pressure, (2) Regulatory changes affecting operations, (3) Economic downturns impacting demand, (4) Technology disruption risks, (5) Supply chain and operational challenges.",
-        "competitor_analysis": f"{company_name} demonstrates competitive positioning within its industry through consistent financial performance and strategic market positioning relative to key competitors in the sector.",
-        "major_takeaways": f"Revenue Growth: {company_name}'s revenue growth shows consistent performance trends.\n\nGross Profit Margin: {company_name}'s gross profit margins demonstrate operational effectiveness.\n\nSG&A Expense Margin: {company_name}'s SG&A expense management shows disciplined cost control.\n\nEBITDA Margin Stability: {company_name}'s EBITDA margin stability reflects strong underlying fundamentals.",
-        "news_summary": f"Recent news coverage for {company_name} reflects ongoing market interest and developments in the company's operations and strategic initiatives."
+        "tagline": f"{company_name} 的财务基本面具备一定韧性，收入增长、盈利能力和资产负债表质量是后续跟踪的核心。公司竞争位置、经营效率和资本回报仍需结合最新财报与同行估值持续验证。",
+        "company_overview": f"{company_name} 是所在行业的重要参与者，业务表现取决于终端需求、产品竞争力、成本控制和资本配置效率。后续分析应重点关注收入结构、利润率趋势、现金流质量以及管理层对增长机会的执行能力。",
+        "investment_overview": f"{company_name} 的投资判断需要同时考量增长确定性、盈利弹性、估值水平和潜在风险。若公司能够维持收入增长并改善利润率，其长期价值创造能力有望增强；反之，需求放缓或竞争加剧可能压制估值。",
+        "valuation_overview": f"{company_name} 的估值应结合历史盈利能力、未来增长预期和同行公司交易倍数进行交叉验证。当前估值是否具备吸引力，取决于市场对增长、利润率和风险溢价的重新定价。",
+        "risks": "主要风险包括：1）行业竞争加剧导致市场份额或定价能力下降；2）宏观经济走弱压制需求；3）监管、政策或合规变化影响经营；4）供应链、成本或执行风险；5）估值过高导致股价对业绩波动更敏感。",
+        "competitor_analysis": f"{company_name} 的竞争力需要放在同行公司框架中评估，重点比较收入增长、EBITDA 利润率、现金流、估值倍数和市场份额变化。若公司在增长和盈利质量上持续优于同行，则估值溢价更具支撑。",
+        "major_takeaways": f"收入增长：{company_name} 的收入趋势是判断基本面动能的首要指标。\n\n毛利率与贡献利润率：利润率变化反映产品结构、成本控制和定价能力。\n\nSG&A 费用率：费用率改善通常意味着运营杠杆释放。\n\nEBITDA 利润率：EBITDA 稳定性体现公司盈利质量和抗周期能力。",
+        "news_summary": f"{company_name} 的近期新闻需要从业务进展、行业变化、资本市场反应和潜在风险四个维度判断其投资含义。"
     }
-    return fallbacks.get(prompt_type, f"{company_name} analysis for {prompt_type.replace('_', ' ')} section.")
+    return fallbacks.get(prompt_type, f"{company_name} 的 {prompt_type.replace('_', ' ')} 分析暂不可用。")
 
 
 # System prompts for each text section
 SYSTEM_PROMPTS = {
-    "tagline": "You are an equity research analyst. Create a 3-sentence professional tagline summarizing the company's financial position. Be concise and professional. Do not use markdown.",
-    "company_overview": "You are a financial analyst. Write a comprehensive company overview (300-400 words) covering business model, products/services, market position, and recent performance. Use plain text, no markdown.",
-    "investment_overview": "You are an investment analyst. Write an investment update (200-300 words) covering recent financial performance, growth drivers, and outlook. Use plain text, no markdown.",
-    "valuation_overview": "You are a valuation analyst. Write a valuation analysis (200-300 words) covering current valuation metrics, peer comparison, and fair value assessment. Use plain text, no markdown.",
-    "risks": "You are a risk analyst. List 5 key investment risks in bullet point format. Be specific and concise.",
-    "competitor_analysis": "You are a competitive analyst. Write a competitor analysis (200-300 words) comparing the company to its peers. Use plain text, no markdown.",
-    "major_takeaways": "You are a financial analyst. Provide 4 major takeaways covering: Revenue Growth, Gross Profit Margin, SG&A Expense Margin, and EBITDA Margin. Format each with a header followed by 1-2 sentences.",
-    "news_summary": "You are a financial news analyst. Summarize the recent news (200-300 words) highlighting key developments and their investment implications. Use plain text, no markdown."
+    "tagline": "你是资深股票研究分析师。请用简体中文写 3 句话，专业、简洁地概括公司的财务状况、投资亮点和主要观察点。不要使用 Markdown。",
+    "company_overview": "你是金融分析师。请用简体中文写公司概览，覆盖商业模式、产品/服务、市场位置和近期经营表现。使用纯文本，不要使用 Markdown。",
+    "investment_overview": "你是投资分析师。请用简体中文写投资观点，覆盖近期财务表现、增长驱动、盈利质量和展望。使用纯文本，不要使用 Markdown。",
+    "valuation_overview": "你是估值分析师。请用简体中文写估值分析，覆盖估值倍数、同行比较、合理估值判断和关键假设。使用纯文本，不要使用 Markdown。",
+    "risks": "你是风险分析师。请用简体中文列出 5 条关键投资风险，每条具体、克制、可执行跟踪。",
+    "competitor_analysis": "你是竞争分析师。请用简体中文写同行比较，重点比较增长、利润率、估值倍数和竞争位置。使用纯文本，不要使用 Markdown。",
+    "major_takeaways": "你是金融分析师。请用简体中文给出 4 条核心结论，覆盖收入增长、毛利/贡献利润率、SG&A 费用率和 EBITDA 利润率。每条用标题加 1-2 句话。",
+    "news_summary": "你是财经新闻分析师。请用简体中文总结近期新闻，突出关键事件、情绪变化和投资含义。使用纯文本，不要使用 Markdown。"
 }
 
 
@@ -55,7 +55,7 @@ def _prepare_user_prompt(data: Dict, prompt_type: str, company_name: str, compan
     company_news = data.get('company_news')
     retail_sentiment = data.get('retail_sentiment')
     
-    prompt = f"Company: {company_name} ({company_ticker})\n\n"
+    prompt = f"公司：{company_name} ({company_ticker})\n\n"
     
     if financial_metrics is not None and not financial_metrics.empty:
         prompt += _df_to_string(financial_metrics, "Financial Metrics")
@@ -75,7 +75,10 @@ def _prepare_user_prompt(data: Dict, prompt_type: str, company_name: str, compan
     if prompt_type == "news_summary" and retail_sentiment:
         prompt += "\n" + format_retail_sentiment_for_prompt(retail_sentiment) + "\n"
 
-    prompt += f"\nPlease provide the {prompt_type.replace('_', ' ')} based on the above data."
+    prompt += (
+        f"\n请基于以上数据生成 {prompt_type.replace('_', ' ')}。"
+        "所有输出必须是简体中文，避免英文段落和英文标题；股票代码、公司英文名和财务指标英文缩写可以保留。"
+    )
     return prompt
 
 

@@ -18,6 +18,8 @@ services:
         value: https://api.mikoto.vip
       - key: FINROBOT_PUBLIC_URL
         value: https://finrobot-equity.onrender.com
+      - key: FEISHU_DOC_BASE_URL
+        value: https://feishu.cn/docx
       - key: FEISHU_APP_ID
         sync: false
       - key: FEISHU_APP_SECRET
