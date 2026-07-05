@@ -393,6 +393,7 @@ class AnalysisRequest(BaseModel):
     margin_improvement: float = 0.01
     generate_text: bool = True
     generate_pdf: bool = True
+    generate_html_report: bool = True
     fmp_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
     # 新增增强功能选项
@@ -449,6 +450,7 @@ def parse_feishu_report_request(text: str) -> Optional[AnalysisRequest]:
         peers=peers,
         generate_text=True,
         generate_pdf=False,
+        generate_html_report=False,
     )
 
 
@@ -946,6 +948,24 @@ def execute_analysis_pipeline(task_id: str, req: AnalysisRequest):
             db.close()
         except Exception as e:
             logger.warning(f"Failed to update report status: {e}")
+        return
+
+    if not req.generate_html_report:
+        tasks[task_id]["status"] = "completed"
+        append_task_log(task_id, "Analysis completed successfully; skipped HTML/PDF report generation.")
+        try:
+            db = SessionLocal()
+            crud.update_report_request(db, task_id, "completed")
+            db.close()
+        except Exception as e:
+            logger.warning(f"Failed to update report status: {e}")
+        tasks[task_id]["result"] = {
+            "analysis_dir": analysis_output_dir,
+            "report_dir": report_output_dir,
+            "ticker": req.ticker,
+            "html": [],
+            "pdf": [],
+        }
         return
 
     # Step 2: Create Equity Report
