@@ -496,7 +496,7 @@ def parse_feishu_report_request(text: str) -> Optional[AnalysisRequest]:
         peers=peers,
         generate_text=False,
         generate_pdf=False,
-        generate_html_report=False,
+        generate_html_report=True,
         enable_enhanced_news=False,
     )
 
@@ -757,13 +757,9 @@ def build_chinese_report_blocks(req: AnalysisRequest, analysis_output_dir: str, 
     metric_rows = read_metric_summary(os.path.join(analysis_output_dir, "financial_metrics_and_forecasts.csv"))
     peer_ebitda_rows = read_csv_summary(os.path.join(analysis_output_dir, "peer_ebitda_comparison.csv"), "ticker")
     peer_ev_rows = read_csv_summary(os.path.join(analysis_output_dir, "peer_ev_ebitda_comparison.csv"), "ticker")
-    sensitivity_rows = read_json_summary(os.path.join(analysis_output_dir, "sensitivity_analysis.json"))
-    catalyst_rows = read_json_summary(os.path.join(analysis_output_dir, "catalyst_analysis.json"))
 
-    metric_body = "\n".join(f"- {row}" for row in metric_rows)
+    metric_body = "\n".join(f"- {row}" for row in metric_rows[:10])
     peer_body = "\n".join(f"- {row}" for row in peer_ebitda_rows + peer_ev_rows)
-    sensitivity_body = "\n".join(f"- {row}" for row in sensitivity_rows)
-    catalyst_body = "\n".join(f"- {row}" for row in catalyst_rows)
 
     fallback_takeaways = ""
     if metric_rows:
@@ -774,7 +770,15 @@ def build_chinese_report_blocks(req: AnalysisRequest, analysis_output_dir: str, 
             + "\n".join(f"- {row}" for row in metric_rows[:5])
         )
 
+    html_files = []
+    if os.path.exists(report_output_dir):
+        html_files = [f for f in os.listdir(report_output_dir) if f.endswith(".html")]
+    professional_files = [f for f in html_files if "Professional_Equity_Report" in f]
+    selected_html = (professional_files or html_files or [None])[0]
+    report_link = public_url(f"/output/{req.ticker}/report/{selected_html}") if selected_html else ""
+
     sections = {
+        "专业 HTML 研报": report_link,
         "核心结论": read_text_file(os.path.join(analysis_output_dir, "major_takeaways.txt")) or fallback_takeaways,
         "关键财务指标": metric_body,
         "投资观点": read_text_file(os.path.join(analysis_output_dir, "investment_overview.txt")),
@@ -782,23 +786,14 @@ def build_chinese_report_blocks(req: AnalysisRequest, analysis_output_dir: str, 
         "财务表现分析": read_text_file(os.path.join(analysis_output_dir, "tagline.txt")),
         "估值分析": read_text_file(os.path.join(analysis_output_dir, "valuation_overview.txt")),
         "同行公司比较": read_text_file(os.path.join(analysis_output_dir, "competitor_analysis.txt")) or peer_body,
-        "敏感性分析": sensitivity_body,
-        "催化因素": catalyst_body,
         "主要风险": read_text_file(os.path.join(analysis_output_dir, "risks.txt")),
         "新闻与催化因素": read_text_file(os.path.join(analysis_output_dir, "news_summary.txt")),
     }
 
-    html_files = []
-    if os.path.exists(report_output_dir):
-        html_files = [f for f in os.listdir(report_output_dir) if f.endswith(".html")]
-    if html_files:
-        report_link = public_url(f"/output/{req.ticker}/report/{html_files[0]}")
-        sections["在线报告链接"] = report_link
-
     blocks = [
         feishu_text_block(f"{req.company_name}（{req.ticker}）股票研究报告", bold=True),
         feishu_text_block(
-            "本报告由 FinRobot 自动生成，数据来自 FMP，并优先使用结构化财务数据生成中文投研文档。内容仅供投研参考，不构成投资建议。"
+            "本报告由 FinRobot 自动生成。飞书文档保留核心摘要，完整图表和表格请打开专业 HTML 研报。内容仅供投研参考，不构成投资建议。"
         ),
     ]
     for title, body in sections.items():
@@ -1139,8 +1134,10 @@ def execute_analysis_pipeline(task_id: str, req: AnalysisRequest):
         "--major-takeaways-file", os.path.join(base_output_dir, "major_takeaways.txt"),
         "--output-dir", report_output_dir,
         "--config-file", config_file,
-        "--enable-text-regeneration"
     ]
+
+    if req.generate_text:
+        cmd_report.append("--enable-text-regeneration")
     
     # 新增增强功能选项
     if req.enable_enhanced_charts:
@@ -1261,11 +1258,19 @@ def execute_feishu_analysis_pipeline(
 
         task.setdefault("result", {})
         task["result"]["feishu_doc"] = doc
+        html_files = task["result"].get("html") or []
+        html_url = public_url(f"/output/{req.ticker}/report/{html_files[0]}") if html_files else ""
         append_task_log(task_id, f"Created Feishu document: {doc['url']}")
+        reply_text = (
+            f"{req.company_name}（{req.ticker}）中文投研报告已生成：\n"
+            f"飞书文档：{doc['url']}\n"
+        )
+        if html_url:
+            reply_text += f"专业 HTML 研报：{html_url}\n"
+        reply_text += f"文档 ID：{doc['document_id']}"
         reply_feishu_message_sync(
             message_id,
-            f"{req.company_name}（{req.ticker}）中文投研文档已生成：\n{doc['url']}\n"
-            f"文档 ID：{doc['document_id']}",
+            reply_text,
         )
     except Exception as e:
         logger.warning(f"Failed to create Feishu document: {e}")

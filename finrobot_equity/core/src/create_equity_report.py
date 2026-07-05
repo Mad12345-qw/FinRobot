@@ -266,19 +266,19 @@ def process_text_content(args, analysis_df, peer_ebitda_df, peer_ev_ebitda_df, o
             )
             
             # Force regeneration for CSV-like data even without the flag
-            if is_csv_data and openai_api_key:
+            if is_csv_data and args.enable_text_regeneration and openai_api_key:
                 print(f"⚠️ Detected CSV data in {text_type}, forcing AI regeneration...")
                 processed_texts[text_type] = regenerate_text_if_needed(
                     raw_content or "", text_type, args.company_name, args.company_ticker,
                     analysis_df, peer_ebitda_df, peer_ev_ebitda_df, openai_api_key
                 )
-            # If no API key, provide a fallback
+            # If AI regeneration is disabled or unavailable, provide a stable Chinese fallback.
             elif is_csv_data:
-                print(f"⚠️ CSV data detected in {text_type} but no API key available, using fallback...")
+                print(f"⚠️ CSV data detected in {text_type}; using fallback text...")
                 if text_type == "competitor_analysis":
-                    processed_texts[text_type] = f"{args.company_name} demonstrates competitive positioning within its industry sector through consistent financial performance and strategic market positioning relative to key competitors."
+                    processed_texts[text_type] = f"{args.company_name}（{args.company_ticker}）的同行比较请优先查看 HTML 研报中的表格与图表。本节基于同行 EBITDA、EV/EBITDA 等数据生成，用于快速判断公司相对估值和盈利能力位置。"
                 else:  # major_takeaways
-                    processed_texts[text_type] = f"Revenue Growth: {args.company_name}'s revenue growth shows consistent performance trends.\n\nGross Profit Margin: {args.company_name}'s gross profit margins demonstrate operational effectiveness.\n\nSG&A Expense Margin: {args.company_name}'s SG&A expense management shows disciplined cost control.\n\nEBITDA Margin Stability: {args.company_name}'s EBITDA margin stability reflects strong underlying fundamentals."
+                    processed_texts[text_type] = f"营收增长：请结合最近年度营收增长率判断增长动能。\n\n盈利能力：请重点关注贡献利润率和 EBITDA 利润率变化。\n\n费用控制：销售及管理费用率可反映公司运营杠杆。\n\n估值位置：请结合 PE、PS、EV/EBITDA 以及同行比较表综合判断。"
             else:
                 # Regular flow for non-CSV data
                 if args.enable_text_regeneration and openai_api_key:
