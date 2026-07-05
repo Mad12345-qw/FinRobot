@@ -20,6 +20,10 @@ services:
         value: https://finrobot-equity.onrender.com
       - key: FEISHU_DOC_BASE_URL
         value: https://feishu.cn/docx
+      - key: FEISHU_WIKI_PARENT_TOKEN
+        value: N8qOwq2RbiYjLakuRAqcD2AAnTg
+      - key: FEISHU_WIKI_SPACE_ID
+        value: "7630841377449872572"
       - key: FEISHU_APP_ID
         sync: false
       - key: FEISHU_APP_SECRET

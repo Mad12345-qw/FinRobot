@@ -378,6 +378,8 @@ FEISHU_APP_ID = os.getenv("FEISHU_APP_ID", "")
 FEISHU_APP_SECRET = os.getenv("FEISHU_APP_SECRET", "")
 FEISHU_VERIFICATION_TOKEN = os.getenv("FEISHU_VERIFICATION_TOKEN", "")
 FEISHU_DOC_BASE_URL = os.getenv("FEISHU_DOC_BASE_URL", "https://feishu.cn/docx")
+FEISHU_WIKI_PARENT_TOKEN = os.getenv("FEISHU_WIKI_PARENT_TOKEN", "")
+FEISHU_WIKI_SPACE_ID = os.getenv("FEISHU_WIKI_SPACE_ID", "")
 PUBLIC_BASE_URL = os.getenv("FINROBOT_PUBLIC_URL") or os.getenv("RENDER_EXTERNAL_URL", "")
 
 class AnalysisRequest(BaseModel):
@@ -664,17 +666,56 @@ def create_feishu_document(title: str, blocks: List[Dict], chat_id: Optional[str
 
     headers = {"Authorization": f"Bearer {token}"}
     with httpx.Client(timeout=30.0) as client:
-        create_response = client.post(
-            "https://open.feishu.cn/open-apis/docx/v1/documents",
-            headers=headers,
-            json={"title": title},
-        )
-        create_response.raise_for_status()
-        create_data = create_response.json()
-        if create_data.get("code") != 0:
-            raise RuntimeError(f"Feishu document create failed: {create_data}")
+        node_token = None
+        document_url = None
 
-        document_id = create_data["data"]["document"]["document_id"]
+        if FEISHU_WIKI_PARENT_TOKEN:
+            space_id = FEISHU_WIKI_SPACE_ID
+            if not space_id:
+                parent_response = client.get(
+                    "https://open.feishu.cn/open-apis/wiki/v2/spaces/get_node",
+                    headers=headers,
+                    params={"token": FEISHU_WIKI_PARENT_TOKEN, "obj_type": "wiki"},
+                )
+                parent_response.raise_for_status()
+                parent_data = parent_response.json()
+                if parent_data.get("code") != 0:
+                    raise RuntimeError(f"Feishu wiki parent lookup failed: {parent_data}")
+                space_id = parent_data["data"]["node"]["space_id"]
+
+            create_response = client.post(
+                f"https://open.feishu.cn/open-apis/wiki/v2/spaces/{space_id}/nodes",
+                headers=headers,
+                json={
+                    "obj_type": "docx",
+                    "node_type": "origin",
+                    "parent_node_token": FEISHU_WIKI_PARENT_TOKEN,
+                    "title": title,
+                },
+            )
+            create_response.raise_for_status()
+            create_data = create_response.json()
+            if create_data.get("code") != 0:
+                raise RuntimeError(f"Feishu wiki document create failed: {create_data}")
+
+            node = create_data["data"]["node"]
+            document_id = node["obj_token"]
+            node_token = node["node_token"]
+            document_url = node.get("url")
+        else:
+            create_response = client.post(
+                "https://open.feishu.cn/open-apis/docx/v1/documents",
+                headers=headers,
+                json={"title": title},
+            )
+            create_response.raise_for_status()
+            create_data = create_response.json()
+            if create_data.get("code") != 0:
+                raise RuntimeError(f"Feishu document create failed: {create_data}")
+
+            document_id = create_data["data"]["document"]["document_id"]
+            document_url = f"{FEISHU_DOC_BASE_URL.rstrip('/')}/{document_id}"
+
         for start in range(0, len(blocks), 20):
             chunk = blocks[start:start + 20]
             block_response = client.post(
@@ -703,7 +744,8 @@ def create_feishu_document(title: str, blocks: List[Dict], chat_id: Optional[str
 
     return {
         "document_id": document_id,
-        "url": f"{FEISHU_DOC_BASE_URL.rstrip('/')}/{document_id}",
+        "node_token": node_token,
+        "url": document_url or f"{FEISHU_DOC_BASE_URL.rstrip('/')}/{node_token or document_id}",
     }
 
 
