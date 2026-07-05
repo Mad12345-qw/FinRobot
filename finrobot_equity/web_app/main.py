@@ -381,6 +381,52 @@ FEISHU_DOC_BASE_URL = os.getenv("FEISHU_DOC_BASE_URL", "https://feishu.cn/docx")
 FEISHU_WIKI_PARENT_TOKEN = os.getenv("FEISHU_WIKI_PARENT_TOKEN", "")
 FEISHU_WIKI_SPACE_ID = os.getenv("FEISHU_WIKI_SPACE_ID", "")
 PUBLIC_BASE_URL = os.getenv("FINROBOT_PUBLIC_URL") or os.getenv("RENDER_EXTERNAL_URL", "")
+FINANCIAL_LABEL_ZH = {
+    "Revenue": "营收",
+    "Cost of Operations": "营业成本",
+    "SG&A": "销售及管理费用",
+    "Contribution Profit": "贡献利润",
+    "Contribution Margin": "贡献利润率",
+    "EBITDA": "EBITDA",
+    "EBITDA Margin": "EBITDA 利润率",
+    "SG&A Margin": "销售及管理费用率",
+    "Revenue Growth": "营收增长率",
+    "EPS": "每股收益 EPS",
+    "PE Ratio": "市盈率 PE",
+    "CAGR": "复合年增长率 CAGR",
+    "Growth Delta": "增长率变化",
+    "Margin Delta": "利润率变化",
+    "ticker": "股票代码",
+    "Ticker": "股票代码",
+    "metrics": "指标",
+    "summary": "摘要",
+    "revenue_sensitivity": "营收敏感性",
+    "margin_sensitivity": "利润率敏感性",
+    "confidence_intervals": "置信区间",
+}
+TEXT_ZH_REPLACEMENTS = {
+    "## Sensitivity Analysis Summary": "敏感性分析摘要",
+    "### Key Assumptions:": "关键假设：",
+    "### Confidence Intervals:": "置信区间：",
+    "### Sensitivity Notes:": "敏感性说明：",
+    "Revenue Growth": "营收增长率",
+    "Revenue growth sensitivity": "营收增长率敏感性",
+    "Margin sensitivity": "利润率敏感性",
+    "Margin Delta": "利润率变化",
+    "Growth Delta": "增长率变化",
+    "EBITDA Margin": "EBITDA 利润率",
+    "Revenue": "营收",
+    "EBITDA": "EBITDA",
+    "confidence": "置信度",
+    "change in growth rate": "增长率变化",
+    "change in EBITDA margin": "EBITDA 利润率变化",
+    "Combined effects shown in sensitivity matrix": "组合影响已在敏感性矩阵中展示",
+    "Sensitivity Analysis Summary": "敏感性分析摘要",
+    "Key Assumptions": "关键假设",
+    "Confidence Intervals": "置信区间",
+    "Sensitivity Notes": "敏感性说明",
+    "N/A": "无数据",
+}
 
 class AnalysisRequest(BaseModel):
     ticker: str
@@ -560,6 +606,18 @@ def read_text_file(path: str) -> str:
         return ""
 
 
+def zh_label(label: str) -> str:
+    label = str(label or "").strip()
+    return FINANCIAL_LABEL_ZH.get(label, label)
+
+
+def zh_value(value) -> str:
+    text = str(value)
+    for source, target in TEXT_ZH_REPLACEMENTS.items():
+        text = text.replace(source, target)
+    return text
+
+
 def read_metric_summary(csv_path: str, limit: int = 12) -> List[str]:
     if not os.path.exists(csv_path):
         return []
@@ -569,11 +627,11 @@ def read_metric_summary(csv_path: str, limit: int = 12) -> List[str]:
         with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                metric = row.get("metrics")
+                metric = zh_label(row.get("metrics"))
                 if not metric:
                     continue
                 values = [
-                    f"{key}: {value}"
+                    f"{zh_label(key)}: {zh_value(value)}"
                     for key, value in row.items()
                     if key != "metrics" and value not in (None, "")
                 ]
@@ -598,11 +656,11 @@ def read_csv_summary(csv_path: str, title_field: str, limit: int = 8) -> List[st
                 if not title:
                     continue
                 values = [
-                    f"{key}: {value}"
+                    f"{zh_label(key)}: {zh_value(value)}"
                     for key, value in row.items()
                     if key != title_field and value not in (None, "")
                 ]
-                rows.append(f"{title} | " + " | ".join(values[:5]))
+                rows.append(f"{zh_value(title)} | " + " | ".join(values[:5]))
                 if len(rows) >= limit:
                     break
     except Exception as e:
@@ -628,19 +686,23 @@ def read_json_summary(json_path: str, limit: int = 8) -> List[str]:
             return
         if isinstance(value, dict):
             simple_values = [
-                f"{key}: {item}"
+                f"{zh_label(key)}: {zh_value(item)}"
                 for key, item in value.items()
                 if not isinstance(item, (dict, list)) and item not in (None, "")
             ]
             if simple_values:
-                rows.append(f"{prefix} | " + " | ".join(simple_values[:5]))
+                if prefix:
+                    rows.append(f"{zh_value(prefix)} | " + " | ".join(simple_values[:5]))
+                else:
+                    rows.append(" | ".join(simple_values[:5]))
             for key, item in value.items():
-                flatten(f"{prefix}.{key}" if prefix else str(key), item)
+                label = zh_label(str(key))
+                flatten(f"{prefix}.{label}" if prefix else label, item)
         elif isinstance(value, list):
             for index, item in enumerate(value[:limit]):
                 flatten(f"{prefix}[{index + 1}]", item)
         elif value not in (None, ""):
-            rows.append(f"{prefix}: {value}")
+            rows.append(f"{zh_value(prefix)}: {zh_value(value)}")
 
     flatten("", data)
     return rows[:limit]
