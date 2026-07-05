@@ -16,6 +16,8 @@ services:
         value: gpt-4.1-mini
       - key: OPENAI_BASE_URL
         value: https://api.openai.com/v1
+      - key: FINROBOT_PUBLIC_URL
+        value: https://finrobot-equity.onrender.com
       - key: FEISHU_APP_ID
         sync: false
       - key: FEISHU_APP_SECRET
