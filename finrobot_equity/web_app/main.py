@@ -932,6 +932,22 @@ def execute_analysis_pipeline(task_id: str, req: AnalysisRequest):
             logger.warning(f"Failed to update report status: {e}")
         return
 
+    analysis_csv_path = os.path.join(analysis_output_dir, "financial_metrics_and_forecasts.csv")
+    if not os.path.exists(analysis_csv_path) or os.path.getsize(analysis_csv_path) == 0:
+        error_message = (
+            "Financial analysis did not produce financial_metrics_and_forecasts.csv. "
+            "Check FMP API access and upstream data logs."
+        )
+        append_task_log(task_id, f"Error: {error_message}")
+        tasks[task_id]["status"] = "failed"
+        try:
+            db = SessionLocal()
+            crud.update_report_request(db, task_id, "failed", error_message)
+            db.close()
+        except Exception as e:
+            logger.warning(f"Failed to update report status: {e}")
+        return
+
     # Step 2: Create Equity Report
     base_output_dir = analysis_output_dir
     
