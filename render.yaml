@@ -15,7 +15,7 @@ services:
       - key: OPENAI_MODEL
         value: gpt-5.5
       - key: OPENAI_BASE_URL
-        value: https://api.mikoto.vip
+        value: https://api.mikoto.vip/v1
       - key: FINROBOT_PUBLIC_URL
         value: https://finrobot-equity.onrender.com
       - key: FEISHU_DOC_BASE_URL
