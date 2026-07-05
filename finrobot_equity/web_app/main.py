@@ -448,9 +448,10 @@ def parse_feishu_report_request(text: str) -> Optional[AnalysisRequest]:
         ticker=ticker,
         company_name=company_name,
         peers=peers,
-        generate_text=True,
+        generate_text=False,
         generate_pdf=False,
         generate_html_report=False,
+        enable_enhanced_news=False,
     )
 
 
@@ -584,6 +585,67 @@ def read_metric_summary(csv_path: str, limit: int = 12) -> List[str]:
     return rows
 
 
+def read_csv_summary(csv_path: str, title_field: str, limit: int = 8) -> List[str]:
+    if not os.path.exists(csv_path):
+        return []
+
+    rows = []
+    try:
+        with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                title = row.get(title_field) or row.get("ticker") or row.get("Ticker") or row.get("metrics")
+                if not title:
+                    continue
+                values = [
+                    f"{key}: {value}"
+                    for key, value in row.items()
+                    if key != title_field and value not in (None, "")
+                ]
+                rows.append(f"{title} | " + " | ".join(values[:5]))
+                if len(rows) >= limit:
+                    break
+    except Exception as e:
+        logger.warning(f"Failed to read CSV summary {csv_path}: {e}")
+    return rows
+
+
+def read_json_summary(json_path: str, limit: int = 8) -> List[str]:
+    if not os.path.exists(json_path):
+        return []
+
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        logger.warning(f"Failed to read JSON summary {json_path}: {e}")
+        return []
+
+    rows = []
+
+    def flatten(prefix: str, value):
+        if len(rows) >= limit:
+            return
+        if isinstance(value, dict):
+            simple_values = [
+                f"{key}: {item}"
+                for key, item in value.items()
+                if not isinstance(item, (dict, list)) and item not in (None, "")
+            ]
+            if simple_values:
+                rows.append(f"{prefix} | " + " | ".join(simple_values[:5]))
+            for key, item in value.items():
+                flatten(f"{prefix}.{key}" if prefix else str(key), item)
+        elif isinstance(value, list):
+            for index, item in enumerate(value[:limit]):
+                flatten(f"{prefix}[{index + 1}]", item)
+        elif value not in (None, ""):
+            rows.append(f"{prefix}: {value}")
+
+    flatten("", data)
+    return rows[:limit]
+
+
 def feishu_text_block(content: str, bold: bool = False) -> Dict:
     return {
         "block_type": 2,
@@ -620,28 +682,49 @@ def split_paragraphs(text: str, max_len: int = 1200) -> List[str]:
 
 
 def add_doc_section(blocks: List[Dict], title: str, body: str):
+    if not (body or "").strip():
+        return
+
     blocks.append(feishu_text_block(title, bold=True))
     paragraphs = split_paragraphs(body)
-    if not paragraphs:
-        paragraphs = ["暂无可用内容。"]
     for paragraph in paragraphs[:6]:
         blocks.append(feishu_text_block(paragraph))
 
 
 def build_chinese_report_blocks(req: AnalysisRequest, analysis_output_dir: str, report_output_dir: str) -> List[Dict]:
+    metric_rows = read_metric_summary(os.path.join(analysis_output_dir, "financial_metrics_and_forecasts.csv"))
+    peer_ebitda_rows = read_csv_summary(os.path.join(analysis_output_dir, "peer_ebitda_comparison.csv"), "ticker")
+    peer_ev_rows = read_csv_summary(os.path.join(analysis_output_dir, "peer_ev_ebitda_comparison.csv"), "ticker")
+    sensitivity_rows = read_json_summary(os.path.join(analysis_output_dir, "sensitivity_analysis.json"))
+    catalyst_rows = read_json_summary(os.path.join(analysis_output_dir, "catalyst_analysis.json"))
+
+    metric_body = "\n".join(f"- {row}" for row in metric_rows)
+    peer_body = "\n".join(f"- {row}" for row in peer_ebitda_rows + peer_ev_rows)
+    sensitivity_body = "\n".join(f"- {row}" for row in sensitivity_rows)
+    catalyst_body = "\n".join(f"- {row}" for row in catalyst_rows)
+
+    fallback_takeaways = ""
+    if metric_rows:
+        fallback_takeaways = (
+            f"{req.company_name}（{req.ticker}）的本次报告已完成基础财务抓取、预测测算"
+            "和结构化投研整理。以下结论基于 FMP 财务数据自动生成，建议结合公司公告、"
+            "最新财报电话会和市场价格进一步复核。\n"
+            + "\n".join(f"- {row}" for row in metric_rows[:5])
+        )
+
     sections = {
-        "核心结论": read_text_file(os.path.join(analysis_output_dir, "major_takeaways.txt")),
+        "核心结论": read_text_file(os.path.join(analysis_output_dir, "major_takeaways.txt")) or fallback_takeaways,
+        "关键财务指标": metric_body,
         "投资观点": read_text_file(os.path.join(analysis_output_dir, "investment_overview.txt")),
         "公司概览": read_text_file(os.path.join(analysis_output_dir, "company_overview.txt")),
         "财务表现分析": read_text_file(os.path.join(analysis_output_dir, "tagline.txt")),
         "估值分析": read_text_file(os.path.join(analysis_output_dir, "valuation_overview.txt")),
-        "同行公司比较": read_text_file(os.path.join(analysis_output_dir, "competitor_analysis.txt")),
+        "同行公司比较": read_text_file(os.path.join(analysis_output_dir, "competitor_analysis.txt")) or peer_body,
+        "敏感性分析": sensitivity_body,
+        "催化因素": catalyst_body,
         "主要风险": read_text_file(os.path.join(analysis_output_dir, "risks.txt")),
         "新闻与催化因素": read_text_file(os.path.join(analysis_output_dir, "news_summary.txt")),
     }
-    metric_rows = read_metric_summary(os.path.join(analysis_output_dir, "financial_metrics_and_forecasts.csv"))
-    if metric_rows:
-        sections["关键财务指标"] = "\n".join(f"• {row}" for row in metric_rows)
 
     html_files = []
     if os.path.exists(report_output_dir):
@@ -653,11 +736,18 @@ def build_chinese_report_blocks(req: AnalysisRequest, analysis_output_dir: str, 
     blocks = [
         feishu_text_block(f"{req.company_name}（{req.ticker}）股票研究报告", bold=True),
         feishu_text_block(
-            "本报告由 FinRobot 自动生成，数据来自 FMP，文本由接入模型生成。内容仅供投研参考，不构成投资建议。"
+            "本报告由 FinRobot 自动生成，数据来自 FMP，并优先使用结构化财务数据生成中文投研文档。内容仅供投研参考，不构成投资建议。"
         ),
     ]
     for title, body in sections.items():
         add_doc_section(blocks, title, body)
+
+    if len(blocks) <= 2:
+        add_doc_section(
+            blocks,
+            "生成状态",
+            "本次任务完成了文档创建，但未读取到可用的财务 CSV、同行比较或分析文本。请检查 FMP 权限、股票代码和 Render 任务日志后重试。",
+        )
     return blocks
 
 
