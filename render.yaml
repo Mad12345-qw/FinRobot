@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: finrobot-equity
+    runtime: docker
+    repo: https://github.com/Mad12345-qw/FinRobot
+    branch: codex/render-feishu-deploy
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: FINROBOT_ADMIN_EMAIL
+        value: admin@finrobot.local
+      - key: FINROBOT_ADMIN_PASSWORD
+        generateValue: true
+      - key: OPENAI_MODEL
+        value: gpt-4.1-mini
+      - key: OPENAI_BASE_URL
+        value: https://api.openai.com/v1
+      - key: FEISHU_APP_ID
+        sync: false
+      - key: FEISHU_APP_SECRET
+        sync: false
+      - key: FEISHU_VERIFICATION_TOKEN
+        sync: false
+      - key: FMP_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ADANOS_API_KEY
+        sync: false

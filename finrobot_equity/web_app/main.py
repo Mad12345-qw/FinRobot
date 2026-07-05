@@ -7,6 +7,8 @@ import json
 import logging
 import hashlib
 import secrets
+import configparser
+import re
 import httpx
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict
@@ -38,6 +40,38 @@ LOGS_DIR = os.path.join(PROJECT_ROOT, "logs")  # 统一日志目录：finrobot_e
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(LOGS_DIR, exist_ok=True)  # 新增：创建日志目录
+
+def ensure_runtime_config():
+    """Create the core config.ini from Render environment variables."""
+    env_names = [
+        "FMP_API_KEY",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "OPENAI_MODEL",
+        "ADANOS_API_KEY",
+        "ADANOS_BASE_URL",
+    ]
+    config_path = os.path.join(CONFIG_DIR, "config.ini")
+    has_env_config = any(os.getenv(name) for name in env_names)
+
+    if os.path.exists(config_path) and not has_env_config:
+        return
+
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    config = configparser.ConfigParser()
+    config["API_KEYS"] = {
+        "fmp_api_key": os.getenv("FMP_API_KEY", "YOUR_FMP_API_KEY"),
+        "openai_api_key": os.getenv("OPENAI_API_KEY", "YOUR_OPENAI_API_KEY"),
+        "openai_base_url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        "openai_model": os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+        "adanos_api_key": os.getenv("ADANOS_API_KEY", ""),
+        "adanos_base_url": os.getenv("ADANOS_BASE_URL", "https://api.adanos.org"),
+    }
+    with open(config_path, "w", encoding="utf-8") as f:
+        config.write(f)
+
+
+ensure_runtime_config()
 
 app = FastAPI(title="FinRobot Equity Research", version="1.0.0")
 
@@ -339,6 +373,11 @@ async def chrome_devtools():
 # Store tasks in memory
 tasks = {}
 
+FEISHU_APP_ID = os.getenv("FEISHU_APP_ID", "")
+FEISHU_APP_SECRET = os.getenv("FEISHU_APP_SECRET", "")
+FEISHU_VERIFICATION_TOKEN = os.getenv("FEISHU_VERIFICATION_TOKEN", "")
+PUBLIC_BASE_URL = os.getenv("FINROBOT_PUBLIC_URL") or os.getenv("RENDER_EXTERNAL_URL", "")
+
 class AnalysisRequest(BaseModel):
     ticker: str
     company_name: str
@@ -358,6 +397,180 @@ class AnalysisRequest(BaseModel):
     enable_enhanced_news: bool = True
     enable_enhanced_charts: bool = True
     enable_valuation_analysis: bool = True
+
+
+def public_url(path: str) -> str:
+    if not PUBLIC_BASE_URL:
+        return path
+    return f"{PUBLIC_BASE_URL.rstrip('/')}/{path.lstrip('/')}"
+
+
+def parse_feishu_report_request(text: str) -> Optional[AnalysisRequest]:
+    clean_text = re.sub(r"<at[^>]*>.*?</at>", "", text or "", flags=re.IGNORECASE).strip()
+    lower_text = clean_text.lower()
+
+    for prefix in ("/report", "report"):
+        if lower_text.startswith(prefix):
+            clean_text = clean_text[len(prefix):].strip()
+            break
+
+    if not clean_text or lower_text in {"/help", "help"}:
+        return None
+
+    command_parts = [part.strip() for part in clean_text.split("|", 1)]
+    company_part = command_parts[0]
+    peer_part = command_parts[1] if len(command_parts) > 1 else ""
+    tokens = company_part.split()
+
+    if not tokens:
+        return None
+
+    ticker = re.sub(r"[^A-Za-z.\-]", "", tokens[0]).upper()
+    if not re.match(r"^[A-Z][A-Z0-9.\-]{0,9}$", ticker):
+        return None
+
+    peers = [
+        re.sub(r"[^A-Za-z.\-]", "", peer).upper()
+        for peer in re.split(r"[\s,]+", peer_part)
+        if peer.strip()
+    ]
+    peers = [peer for peer in peers if re.match(r"^[A-Z][A-Z0-9.\-]{0,9}$", peer)]
+    company_name = " ".join(tokens[1:]).strip() or ticker
+
+    return AnalysisRequest(
+        ticker=ticker,
+        company_name=company_name,
+        peers=peers,
+        generate_text=True,
+        generate_pdf=True,
+    )
+
+
+async def get_feishu_tenant_access_token() -> Optional[str]:
+    if not FEISHU_APP_ID or not FEISHU_APP_SECRET:
+        return None
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.post(
+            "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+            json={"app_id": FEISHU_APP_ID, "app_secret": FEISHU_APP_SECRET},
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data.get("tenant_access_token")
+
+
+async def reply_feishu_message(message_id: Optional[str], text: str):
+    if not message_id:
+        return
+
+    try:
+        token = await get_feishu_tenant_access_token()
+        if not token:
+            logger.warning("Feishu credentials are not configured; skipped message reply.")
+            return
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.post(
+                f"https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/reply",
+                params={"message_type": "text"},
+                headers={"Authorization": f"Bearer {token}"},
+                json={"content": json.dumps({"text": text}, ensure_ascii=False)},
+            )
+    except Exception as e:
+        logger.warning(f"Failed to reply to Feishu message: {e}")
+
+
+def extract_feishu_text(message: Dict) -> str:
+    content = message.get("content") or "{}"
+    try:
+        content_data = json.loads(content)
+    except json.JSONDecodeError:
+        return content
+    return content_data.get("text", "")
+
+
+def start_feishu_task(req: AnalysisRequest) -> str:
+    task_id = str(uuid.uuid4())
+    tasks[task_id] = {
+        "status": "pending",
+        "logs": [],
+        "result": None,
+        "user": "feishu",
+    }
+    write_log_to_file(task_id, "Task created by Feishu bot")
+    write_log_to_file(task_id, f"Ticker: {req.ticker}, Company: {req.company_name}")
+    return task_id
+
+
+@app.get("/api/health")
+async def health_check():
+    return {
+        "status": "ok",
+        "service": "finrobot-equity",
+        "feishu_configured": bool(FEISHU_APP_ID and FEISHU_APP_SECRET),
+    }
+
+
+@app.post("/api/feishu/events")
+async def feishu_events(payload: Dict, background_tasks: BackgroundTasks):
+    challenge = payload.get("challenge") or payload.get("event", {}).get("challenge")
+    if challenge:
+        return {"challenge": challenge}
+
+    token = payload.get("token") or payload.get("header", {}).get("token")
+    if FEISHU_VERIFICATION_TOKEN and token != FEISHU_VERIFICATION_TOKEN:
+        raise HTTPException(status_code=403, detail="Invalid Feishu verification token")
+
+    event = payload.get("event", {})
+    message = event.get("message", {})
+    if not message:
+        return {"success": True, "ignored": "no message event"}
+
+    message_id = message.get("message_id")
+    text = extract_feishu_text(message)
+    req = parse_feishu_report_request(text)
+
+    if not req:
+        await reply_feishu_message(
+            message_id,
+            "Send: /report AAPL Apple Inc | MSFT GOOGL\n"
+            "The part after | is optional peer tickers.",
+        )
+        return {"success": True, "ignored": "unsupported command"}
+
+    task_id = start_feishu_task(req)
+    background_tasks.add_task(execute_analysis_pipeline, task_id, req)
+    status_link = public_url(f"/api/feishu/status/{task_id}")
+    await reply_feishu_message(
+        message_id,
+        f"Started FinRobot report for {req.ticker}. Task ID: {task_id}\nStatus: {status_link}",
+    )
+    return {"success": True, "task_id": task_id}
+
+
+@app.get("/api/feishu/status/{task_id}")
+async def get_feishu_task_status(task_id: str):
+    if task_id in tasks:
+        task = tasks[task_id]
+        return {
+            "task_id": task_id,
+            "status": task.get("status"),
+            "result": task.get("result"),
+            "log_tail": task.get("logs", [])[-20:],
+        }
+
+    file_logs = read_log_from_file(task_id)
+    if file_logs:
+        return {
+            "task_id": task_id,
+            "status": "unknown",
+            "result": None,
+            "log_tail": file_logs[-20:],
+            "message": "Task logs found after service restart.",
+        }
+
+    raise HTTPException(status_code=404, detail="Task not found")
 
 def run_process(command, task_id, cwd=None):
     """Run a shell command and capture output to the task logs."""
