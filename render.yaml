@@ -13,9 +13,9 @@ services:
       - key: FINROBOT_ADMIN_PASSWORD
         generateValue: true
       - key: OPENAI_MODEL
-        value: gpt-4.1-mini
+        value: gpt-5.5
       - key: OPENAI_BASE_URL
-        value: https://api.openai.com/v1
+        value: https://api.mikoto.vip
       - key: FINROBOT_PUBLIC_URL
         value: https://finrobot-equity.onrender.com
       - key: FEISHU_APP_ID
