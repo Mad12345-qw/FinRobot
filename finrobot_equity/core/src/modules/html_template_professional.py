@@ -114,6 +114,68 @@ def _markdown_to_html(text: str) -> str:
     return '\n'.join(html_lines)
 
 
+def _has_real_content(value) -> bool:
+    """Return True only for non-empty, reader-meaningful report content."""
+    if value is None:
+        return False
+    text = str(value).strip()
+    if not text:
+        return False
+    lowered = _re.sub(r"\s+", " ", text.lower())
+    empty_markers = [
+        "not available",
+        "analysis not available",
+        "data not available",
+        "coverage not available",
+        "investment thesis not available",
+        "company overview not available",
+        "investment overview not available",
+        "valuation analysis not available",
+        "competitive analysis not available",
+        "<p class='body-text' style='color:#94a3b8; font-style:italic;'>",
+        "<p class=\"body-text\" style=\"color:#94a3b8; font-style:italic;\">",
+    ]
+    stripped_html = _re.sub(r"<[^>]+>", "", lowered).strip()
+    return bool(stripped_html) and not any(marker in lowered for marker in empty_markers)
+
+
+def _chart_card(title: str, path: str, caption: str = "") -> str:
+    if not _has_real_content(path):
+        return ""
+    return f"""
+    <div class="chart-container">
+        <img src="{path}" alt="{title}">
+        {f'<p class="caption mt-2">{caption}</p>' if caption else ''}
+    </div>
+    """
+
+
+def _section_html(section_id: str, title: str, body_html: str, classes: str = "mb-10") -> str:
+    if not _has_real_content(body_html):
+        return ""
+    return f"""
+    <section class="{classes}" id="{section_id}">
+        <h2 class="section-title">{title}</h2>
+        {body_html}
+    </section>
+    """
+
+
+def _fallback_investment_thesis(data: dict) -> str:
+    company = data.get("company_name_full", "The company")
+    ticker = data.get("company_ticker", "")
+    figures = data.get("revenue_key_figures", {}) or {}
+    revenue = next((value for key, value in figures.items() if str(key).startswith("Revenue Growth (")), "")
+    thesis = (
+        f"{company} ({ticker}) should be evaluated through three lenses: revenue growth durability, "
+        "EBITDA margin trajectory, and valuation relative to peers. The financial tables and charts "
+        "below provide the primary evidence for the investment case."
+    )
+    if revenue:
+        thesis += f" Latest reported revenue growth was {revenue}."
+    return thesis
+
+
 HTML_PROFESSIONAL_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -352,13 +414,7 @@ HTML_PROFESSIONAL_TEMPLATE = """
             </div>
         </section>
 
-        <!-- Investment Thesis -->
-        <section class="mb-10" id="investment-thesis">
-            <h2 class="section-title">Investment Thesis</h2>
-            <div class="highlight-box">
-                <p class="body-text">{tagline}</p>
-            </div>
-        </section>
+        {investment_thesis_section_html}
 
         <!-- Company Overview -->
         <section class="mb-10" id="company-overview">
@@ -382,10 +438,7 @@ HTML_PROFESSIONAL_TEMPLATE = """
                         {revenue_key_figures_html}
                     </div>
                 </div>
-                <div class="chart-container">
-                    <img src="{revenue_chart_path}" alt="Revenue & EBITDA Chart">
-                    <p class="caption mt-2">Source: Company Filings</p>
-                </div>
+                {revenue_chart_html}
             </div>
 
             <h3 class="heading-2">Earnings & Valuation Metrics</h3>
@@ -397,10 +450,7 @@ HTML_PROFESSIONAL_TEMPLATE = """
                         {eps_key_figures_html}
                     </div>
                 </div>
-                <div class="chart-container">
-                    <img src="{eps_pe_chart_path}" alt="EPS & PE Chart">
-                    <p class="caption mt-2">Source: Company Filings</p>
-                </div>
+                {eps_pe_chart_html}
             </div>
         </section>
 
@@ -417,23 +467,11 @@ HTML_PROFESSIONAL_TEMPLATE = """
                 <div>
                     {peer_ev_ebitda_table_html}
                 </div>
-                <div class="chart-container">
-                    <img src="{ev_ebitda_chart_path}" alt="EV/EBITDA Peer Comparison">
-                    <p class="caption mt-2">EV/EBITDA Peer Comparison</p>
-                </div>
+                {ev_ebitda_chart_html}
             </div>
         </section>
 
-        <!-- News Section -->
-        <section class="mb-10" id="news">
-            <h2 class="section-title">Recent News & Events</h2>
-            <div class="content-card">
-                <h3 class="heading-3" style="margin-top:0;">News Summary</h3>
-                <div class="body-text">{news_summary}</div>
-                {retail_sentiment_html}
-                {enhanced_news_html}
-            </div>
-        </section>
+        {news_section_html}
 
         <!-- Sensitivity Analysis -->
         <section class="mb-10" id="sensitivity">
@@ -443,19 +481,10 @@ HTML_PROFESSIONAL_TEMPLATE = """
             </div>
         </section>
 
-        <!-- Catalyst Analysis -->
-        <section class="mb-10" id="catalysts">
-            <h2 class="section-title">Key Catalysts</h2>
-            <div class="content-card">
-                {catalyst_analysis_html}
-            </div>
-        </section>
+        {catalyst_section_html}
 
         <!-- Advanced Charts -->
-        <section class="mb-10 page-break" id="advanced-charts">
-            <h2 class="section-title">Technical & Advanced Analysis</h2>
-            {advanced_charts_section_html}
-        </section>
+        {advanced_charts_wrapper_html}
 
         <!-- Competition & Risk -->
         <section class="mb-10" id="competition-risk">
@@ -864,6 +893,14 @@ def format_advanced_charts_html_professional(data: dict) -> str:
     share_price = data.get('share_price', 'N/A')
     w52 = data.get('52w_range', data.get('week_52_range', 'N/A'))
     ti = data.get('technical_indicators', {})
+    has_technical_metrics = any(
+        ti.get(key) not in (None, "", "N/A")
+        for key in ["sma50", "sma200", "rsi14", "macd", "macd_signal", "macd_histogram", "avg_volume_20d", "latest_volume", "overall_signal"]
+    )
+    has_price_context = _has_real_content(share_price) or _has_real_content(w52)
+
+    if not has_technical_metrics and not has_price_context:
+        return ""
 
     def _signal_badge(signal):
         if not signal or signal == 'N/A':
@@ -903,6 +940,11 @@ def format_advanced_charts_html_professional(data: dict) -> str:
         html += f'<span style="color:#64748b; font-size:0.8rem; font-weight:500;">Overall Technical Signal:</span>'
         html += _overall_badge(overall)
         html += '</div>'
+
+    if not has_technical_metrics:
+        html += '<p class="body-text" style="color:#64748b;">Detailed SMA, RSI, MACD and volume indicators were not available from the current data source.</p>'
+        html += '</div>'
+        return html
 
     html += '<div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; margin-top:0.5rem;">'
 
@@ -1007,6 +1049,47 @@ def render_professional_html_report(data: dict) -> str:
     """渲染专业 HTML 报告"""
     from datetime import datetime
 
+    raw_tagline = data.get('tagline') or _fallback_investment_thesis(data)
+    raw_news_summary = data.get('news_summary', '')
+    company_overview_html = _markdown_to_html(data.get('company_overview', ''))
+    investment_overview_html = _markdown_to_html(data.get('investment_overview', ''))
+    valuation_overview_html = _markdown_to_html(data.get('valuation_overview', ''))
+    competitor_analysis_html = _markdown_to_html(data.get('competitor_analysis', ''))
+    news_summary_html = _markdown_to_html(raw_news_summary)
+    retail_sentiment_html = format_retail_sentiment_html_professional(data.get('retail_sentiment', {}))
+    enhanced_news_html = format_enhanced_news_html_professional(data.get('enhanced_news', {}))
+    catalyst_analysis_html = format_catalyst_analysis_html_professional(data.get('catalyst_analysis', {}))
+    advanced_charts_section_html = format_advanced_charts_html_professional(data)
+
+    investment_thesis_section_html = _section_html(
+        "investment-thesis",
+        "Investment Thesis",
+        f'<div class="highlight-box"><p class="body-text">{raw_tagline}</p></div>',
+    )
+    news_body_parts = []
+    if _has_real_content(news_summary_html):
+        news_body_parts.append(f'<h3 class="heading-3" style="margin-top:0;">News Summary</h3><div class="body-text">{news_summary_html}</div>')
+    if _has_real_content(retail_sentiment_html):
+        news_body_parts.append(retail_sentiment_html)
+    if _has_real_content(enhanced_news_html):
+        news_body_parts.append(enhanced_news_html)
+    news_section_html = _section_html(
+        "news",
+        "Recent News & Events",
+        f'<div class="content-card">{"".join(news_body_parts)}</div>' if news_body_parts else "",
+    )
+    catalyst_section_html = _section_html(
+        "catalysts",
+        "Key Catalysts",
+        f'<div class="content-card">{catalyst_analysis_html}</div>',
+    )
+    advanced_charts_wrapper_html = _section_html(
+        "advanced-charts",
+        "Technical & Advanced Analysis",
+        advanced_charts_section_html,
+        classes="mb-10 page-break",
+    )
+
     # Prepare data with defaults
     report_data = {
         'company_name_full': data.get('company_name_full', 'Company'),
@@ -1023,28 +1106,35 @@ def render_professional_html_report(data: dict) -> str:
         'roe': data.get('roe', 'N/A'),
         'dividend_yield': data.get('dividend_yield', 'N/A'),
         'week_52_range': data.get('52w_range', data.get('week_52_range', 'N/A')),
-        'tagline': data.get('tagline', 'Investment thesis not available.'),
-        'company_overview': _markdown_to_html(data.get('company_overview', 'Company overview not available.')),
-        'investment_overview': _markdown_to_html(data.get('investment_overview', 'Investment overview not available.')),
+        'tagline': raw_tagline,
+        'investment_thesis_section_html': investment_thesis_section_html,
+        'company_overview': company_overview_html,
+        'investment_overview': investment_overview_html,
         'revenue_analysis_text': data.get('revenue_analysis_text', 'Revenue analysis demonstrates the company\'s financial performance over the analysis period.'),
         'revenue_key_figures_html': format_key_figures_html(data.get('revenue_key_figures', {})),
         'revenue_chart_path': data.get('revenue_chart_path', ''),
+        'revenue_chart_html': _chart_card('Revenue & EBITDA Chart', data.get('revenue_chart_path', ''), 'Source: Company Filings'),
         'eps_analysis_text': data.get('eps_analysis_text', 'Earnings analysis shows the company\'s profitability trends.'),
         'eps_key_figures_html': format_key_figures_html(data.get('eps_key_figures', {})),
         'eps_pe_chart_path': data.get('eps_pe_chart_path', ''),
-        'valuation_overview': _markdown_to_html(data.get('valuation_overview', 'Valuation analysis not available.')),
+        'eps_pe_chart_html': _chart_card('EPS & PE Chart', data.get('eps_pe_chart_path', ''), 'Source: Company Filings'),
+        'valuation_overview': valuation_overview_html,
         'valuation_breakdown_html': format_valuation_breakdown_html(data.get('valuation_analysis', {})),
         'peer_ev_ebitda_table_html': data.get('peer_ev_ebitda_table_html', '<p class="body-text" style="color:#94a3b8; font-style:italic;">Peer comparison data not available.</p>'),
         'ev_ebitda_chart_path': data.get('ev_ebitda_chart_path', ''),
-        'news_summary': _markdown_to_html(data.get('news_summary', 'Recent news coverage not available.')),
-        'retail_sentiment_html': format_retail_sentiment_html_professional(data.get('retail_sentiment', {})),
-        'enhanced_news_html': format_enhanced_news_html_professional(data.get('enhanced_news', {})),
+        'ev_ebitda_chart_html': _chart_card('EV/EBITDA Peer Comparison', data.get('ev_ebitda_chart_path', ''), 'EV/EBITDA Peer Comparison'),
+        'news_summary': news_summary_html,
+        'news_section_html': news_section_html,
+        'retail_sentiment_html': retail_sentiment_html,
+        'enhanced_news_html': enhanced_news_html,
         'sensitivity_analysis_html': format_sensitivity_analysis_html_professional(data.get('sensitivity_analysis', {})),
-        'catalyst_analysis_html': format_catalyst_analysis_html_professional(data.get('catalyst_analysis', {})),
-        'advanced_charts_section_html': format_advanced_charts_html_professional(data),
+        'catalyst_analysis_html': catalyst_analysis_html,
+        'catalyst_section_html': catalyst_section_html,
+        'advanced_charts_section_html': advanced_charts_section_html,
+        'advanced_charts_wrapper_html': advanced_charts_wrapper_html,
         'peer_ebitda_table_html': data.get('peer_ebitda_table_html', '<p class="body-text" style="color:#94a3b8; font-style:italic;">Peer EBITDA data not available.</p>'),
         'peer_ev_ebitda_table_html_comp': data.get('peer_ev_ebitda_table_html', '<p class="body-text" style="color:#94a3b8; font-style:italic;">Peer EV/EBITDA data not available.</p>'),
-        'competitor_analysis': _markdown_to_html(data.get('competitor_analysis', 'Competitive analysis not available.')),
+        'competitor_analysis': competitor_analysis_html,
         'risks_html': format_risks_to_html(data.get('risks', '')),
         'major_takeaways_html': format_takeaways_to_html(data.get('major_takeaways', '')),
         'financial_summary_table_html': data.get('financial_summary_table_html', '<p class="body-text" style="color:#94a3b8; font-style:italic;">Financial summary not available.</p>'),

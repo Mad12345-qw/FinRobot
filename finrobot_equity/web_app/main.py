@@ -618,6 +618,22 @@ def zh_value(value) -> str:
     return text
 
 
+def compact_financial_value(value: str) -> str:
+    text = zh_value(value)
+    try:
+        number = float(str(text).replace(",", ""))
+    except (TypeError, ValueError):
+        return text
+
+    if abs(number) >= 1_000_000_000:
+        return f"{number / 1_000_000_000:.2f}B"
+    if abs(number) >= 1_000_000:
+        return f"{number / 1_000_000:.2f}M"
+    if abs(number) >= 100:
+        return f"{number:.2f}"
+    return f"{number:.2f}".rstrip("0").rstrip(".")
+
+
 def read_metric_summary(csv_path: str, limit: int = 12) -> List[str]:
     if not os.path.exists(csv_path):
         return []
@@ -631,11 +647,11 @@ def read_metric_summary(csv_path: str, limit: int = 12) -> List[str]:
                 if not metric:
                     continue
                 values = [
-                    f"{zh_label(key)}: {zh_value(value)}"
+                    f"{zh_label(key)} {compact_financial_value(value)}"
                     for key, value in row.items()
                     if key != "metrics" and value not in (None, "")
                 ]
-                rows.append(f"{metric} | " + " | ".join(values[:6]))
+                rows.append(f"{metric}：" + "；".join(values[:7]))
                 if len(rows) >= limit:
                     break
     except Exception as e:
@@ -769,6 +785,16 @@ def build_chinese_report_blocks(req: AnalysisRequest, analysis_output_dir: str, 
             "最新财报电话会和市场价格进一步复核。\n"
             + "\n".join(f"- {row}" for row in metric_rows[:5])
         )
+    investment_focus = (
+        "1. 增长质量：重点查看营收增长、EBITDA 与 EBITDA 利润率是否同步改善。\n"
+        "2. 估值位置：结合 PE、PS、EV/EBITDA 和同行表判断当前价格是否透支预期。\n"
+        "3. 风险因素：关注需求周期、毛利率波动、费用率变化和监管/竞争压力。\n"
+        "4. 完整图表：飞书文档只保留中文摘要，图表、表格和分节排版以专业 HTML 研报为准。"
+    )
+    data_coverage = (
+        "若 HTML 中某个图表或板块未出现，通常表示对应上游数据没有返回有效值；"
+        "系统现在会隐藏空图和空板块，避免展示破图或无内容卡片。"
+    )
 
     html_files = []
     if os.path.exists(report_output_dir):
@@ -779,9 +805,10 @@ def build_chinese_report_blocks(req: AnalysisRequest, analysis_output_dir: str, 
 
     sections = {
         "专业 HTML 研报": report_link,
+        "报告使用说明": data_coverage,
         "核心结论": read_text_file(os.path.join(analysis_output_dir, "major_takeaways.txt")) or fallback_takeaways,
+        "投资关注点": read_text_file(os.path.join(analysis_output_dir, "investment_overview.txt")) or investment_focus,
         "关键财务指标": metric_body,
-        "投资观点": read_text_file(os.path.join(analysis_output_dir, "investment_overview.txt")),
         "公司概览": read_text_file(os.path.join(analysis_output_dir, "company_overview.txt")),
         "财务表现分析": read_text_file(os.path.join(analysis_output_dir, "tagline.txt")),
         "估值分析": read_text_file(os.path.join(analysis_output_dir, "valuation_overview.txt")),
