@@ -141,7 +141,15 @@ def _has_real_content(value) -> bool:
 
 def _chart_card(title: str, path: str, caption: str = "") -> str:
     if not _has_real_content(path):
-        return ""
+        return f"""
+        <div class="chart-container">
+            <div style="padding:2.5rem 1rem; text-align:center; color:#64748b; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:0.5rem;">
+                <strong>{title}</strong><br>
+                Chart data was not returned by the upstream data source for this run.
+            </div>
+            {f'<p class="caption mt-2">{caption}</p>' if caption else ''}
+        </div>
+        """
     return f"""
     <div class="chart-container">
         <img src="{path}" alt="{title}">
@@ -152,7 +160,14 @@ def _chart_card(title: str, path: str, caption: str = "") -> str:
 
 def _section_html(section_id: str, title: str, body_html: str, classes: str = "mb-10") -> str:
     if not _has_real_content(body_html):
-        return ""
+        body_html = (
+            "<div class='content-card'>"
+            "<p class='body-text' style='color:#64748b;'>"
+            "This module is part of the full research-report framework, but the upstream data source "
+            "did not return enough usable data for this run. Review API permissions, ticker coverage, "
+            "or rerun with richer peer/news inputs."
+            "</p></div>"
+        )
     return f"""
     <section class="{classes}" id="{section_id}">
         <h2 class="section-title">{title}</h2>
@@ -1095,39 +1110,33 @@ def render_professional_html_report(data: dict) -> str:
         advanced_charts_section_html,
         classes="mb-10 page-break",
     )
-    peer_valuation_body = ""
-    if _has_real_content(peer_ev_table_html) or _has_real_content(data.get('ev_ebitda_chart_path', '')):
-        peer_valuation_body = f"""
-        <h3 class="heading-2">Peer Comparison</h3>
-        <div class="two-column">
-            <div>{peer_ev_table_html}</div>
-            {_chart_card('EV/EBITDA Peer Comparison', data.get('ev_ebitda_chart_path', ''), 'EV/EBITDA Peer Comparison')}
-        </div>
-        """
+    peer_valuation_body = f"""
+    <h3 class="heading-2">Peer Comparison</h3>
+    <div class="two-column">
+        <div>{peer_ev_table_html if _has_real_content(peer_ev_table_html) else '<p class="body-text" style="color:#64748b;">Peer EV/EBITDA table data was not returned for this run.</p>'}</div>
+        {_chart_card('EV/EBITDA Peer Comparison', data.get('ev_ebitda_chart_path', ''), 'EV/EBITDA Peer Comparison')}
+    </div>
+    """
     peer_valuation_section_html = peer_valuation_body
     peer_ebitda_section_html = (
-        f'<div class="content-card mb-6"><h3 class="heading-2" style="margin-top:0;">Peer EBITDA Comparison</h3>{peer_ebitda_table_html}</div>'
-        if _has_real_content(peer_ebitda_table_html) else ""
+        f'<div class="content-card mb-6"><h3 class="heading-2" style="margin-top:0;">Peer EBITDA Comparison</h3>'
+        f'{peer_ebitda_table_html if _has_real_content(peer_ebitda_table_html) else "<p class=\"body-text\" style=\"color:#64748b;\">Peer EBITDA table data was not returned for this run.</p>"}</div>'
     )
     peer_ev_comp_section_html = (
-        f'<div class="content-card mb-6"><h3 class="heading-2" style="margin-top:0;">Peer EV/EBITDA Comparison</h3>{peer_ev_table_html}</div>'
-        if _has_real_content(peer_ev_table_html) else ""
+        f'<div class="content-card mb-6"><h3 class="heading-2" style="margin-top:0;">Peer EV/EBITDA Comparison</h3>'
+        f'{peer_ev_table_html if _has_real_content(peer_ev_table_html) else "<p class=\"body-text\" style=\"color:#64748b;\">Peer EV/EBITDA table data was not returned for this run.</p>"}</div>'
     )
     risks_section_html = (
         f'<h3 class="heading-2">Risk Factors</h3><div class="content-card" style="border-left: 4px solid #ef4444;">{risks_html}</div>'
-        if _has_real_content(risks_html) else ""
     )
     major_takeaways_section_html = (
         f'<h3 class="heading-2">Key Takeaways</h3><div class="content-card" style="border-left: 4px solid #10b981;">{major_takeaways_html}</div>'
-        if _has_real_content(major_takeaways_html) else ""
     )
     credit_cashflow_section_html = (
         f'<h3 class="heading-2">Credit & Cash Flow Metrics</h3>{credit_cashflow_table_html}'
         if _has_real_content(credit_cashflow_table_html) else ""
     )
-    financial_data_body = ""
-    if _has_real_content(financial_summary_table_html):
-        financial_data_body += f'<h3 class="heading-2">Income Statement Summary</h3>{financial_summary_table_html}'
+    financial_data_body = f'<h3 class="heading-2">Income Statement Summary</h3>{financial_summary_table_html if _has_real_content(financial_summary_table_html) else "<p class=\"body-text\" style=\"color:#64748b;\">Financial summary table data was not returned for this run.</p>"}'
     financial_data_body += credit_cashflow_section_html
     financial_data_section_html = _section_html(
         "financial-data",

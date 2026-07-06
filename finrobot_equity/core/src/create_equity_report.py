@@ -38,6 +38,37 @@ from modules.valuation_engine import ValuationEngine
 from modules.report_structure import ReportStructureManager
 from modules.enhanced_text_generator import EnhancedTextGenerator
 
+def _to_report_relative_asset_path(path: str, output_dir: str) -> str:
+    """Use relative asset paths so generated HTML works after being served over HTTP."""
+    if not path:
+        return ""
+    path = str(path)
+    if path.startswith(("http://", "https://", "data:")):
+        return path
+    if os.path.exists(path):
+        try:
+            return os.path.relpath(path, output_dir).replace("\\", "/")
+        except ValueError:
+            return os.path.basename(path)
+    return path.replace("\\", "/")
+
+
+def _normalize_html_asset_paths(report_data: dict, output_dir: str) -> None:
+    for key in [
+        "revenue_chart_path",
+        "eps_pe_chart_path",
+        "ev_ebitda_chart_path",
+        "stock_price_chart_path",
+        "technical_indicators_path",
+        "financial_radar_path",
+        "cash_flow_chart_path",
+        "sensitivity_heatmap_path",
+        "valuation_waterfall_path",
+    ]:
+        if report_data.get(key):
+            report_data[key] = _to_report_relative_asset_path(report_data[key], output_dir)
+
+
 def load_credit_cashflow_metrics_from_csv(file_path: str) -> pd.DataFrame:
     """Load credit and cashflow metrics from a pre-computed CSV file."""
     if not file_path or not os.path.exists(file_path):
@@ -741,6 +772,19 @@ def main():
                 except Exception as e:
                     print(f"⚠️ Error generating cash flow chart: {e}")
             
+            chart_field_map = {
+                'eps_pe': 'eps_pe_chart_path',
+                'stock_price': 'stock_price_chart_path',
+                'technical_indicators': 'technical_indicators_path',
+                'financial_radar': 'financial_radar_path',
+                'cash_flow': 'cash_flow_chart_path',
+                'sensitivity_heatmap': 'sensitivity_heatmap_path',
+                'valuation_waterfall': 'valuation_waterfall_path',
+            }
+            for chart_key, data_key in chart_field_map.items():
+                if enhanced_charts.get(chart_key):
+                    report_data[data_key] = enhanced_charts[chart_key]
+
             report_data['enhanced_charts'] = enhanced_charts
             print(f"✅ Generated {len(enhanced_charts)} enhanced charts total")
         except Exception as e:
@@ -995,6 +1039,7 @@ def main():
         report_data['eps_key_figures'] = eps_figures
     
     # Generate professional HTML report
+    _normalize_html_asset_paths(report_data, output_dir)
     professional_html_path = os.path.join(output_dir, f"Professional_Equity_Report_{args.company_ticker}.html")
     professional_html_content = render_professional_html_report(report_data)
     with open(professional_html_path, "w", encoding="utf-8") as f:

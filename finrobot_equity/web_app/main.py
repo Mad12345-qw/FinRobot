@@ -461,10 +461,12 @@ def parse_feishu_report_request(text: str) -> Optional[AnalysisRequest]:
     lower_text = clean_text.lower()
 
     has_report_prefix = False
-    for prefix in ("/report", "report"):
+    fast_mode = False
+    for prefix in ("/fastreport", "fastreport", "/report", "report"):
         if lower_text.startswith(prefix):
             clean_text = clean_text[len(prefix):].strip()
             has_report_prefix = True
+            fast_mode = "fast" in prefix
             break
 
     if not has_report_prefix or not clean_text or lower_text in {"/help", "help"}:
@@ -494,10 +496,10 @@ def parse_feishu_report_request(text: str) -> Optional[AnalysisRequest]:
         ticker=ticker,
         company_name=company_name,
         peers=peers,
-        generate_text=False,
+        generate_text=not fast_mode,
         generate_pdf=False,
         generate_html_report=True,
-        enable_enhanced_news=False,
+        enable_enhanced_news=not fast_mode,
     )
 
 
@@ -759,13 +761,13 @@ def split_paragraphs(text: str, max_len: int = 1200) -> List[str]:
     return paragraphs
 
 
-def add_doc_section(blocks: List[Dict], title: str, body: str):
+def add_doc_section(blocks: List[Dict], title: str, body: str, max_paragraphs: int = 12):
     if not (body or "").strip():
         return
 
     blocks.append(feishu_text_block(title, bold=True))
     paragraphs = split_paragraphs(body)
-    for paragraph in paragraphs[:6]:
+    for paragraph in paragraphs[:max_paragraphs]:
         blocks.append(feishu_text_block(paragraph))
 
 
@@ -789,11 +791,12 @@ def build_chinese_report_blocks(req: AnalysisRequest, analysis_output_dir: str, 
         "1. 增长质量：重点查看营收增长、EBITDA 与 EBITDA 利润率是否同步改善。\n"
         "2. 估值位置：结合 PE、PS、EV/EBITDA 和同行表判断当前价格是否透支预期。\n"
         "3. 风险因素：关注需求周期、毛利率波动、费用率变化和监管/竞争压力。\n"
-        "4. 完整图表：飞书文档只保留中文摘要，图表、表格和分节排版以专业 HTML 研报为准。"
+        "4. 完整图表：飞书文档保留中文正文与关键数据，专业 HTML 研报提供更完整的图表、表格和分节排版。"
     )
     data_coverage = (
-        "若 HTML 中某个图表或板块未出现，通常表示对应上游数据没有返回有效值；"
-        "系统现在会隐藏空图和空板块，避免展示破图或无内容卡片。"
+        "飞书文档呈现完整中文正文和关键数据摘要；专业 HTML 研报保留图表、表格、估值、"
+        "同行比较、敏感性分析、催化剂和风险等完整模块。若某个模块的数据源未返回，"
+        "文档会明确标注数据覆盖状态，而不是静默删除分析框架。"
     )
 
     html_files = []
@@ -805,22 +808,22 @@ def build_chinese_report_blocks(req: AnalysisRequest, analysis_output_dir: str, 
 
     sections = {
         "专业 HTML 研报": report_link,
-        "报告使用说明": data_coverage,
         "核心结论": read_text_file(os.path.join(analysis_output_dir, "major_takeaways.txt")) or fallback_takeaways,
         "投资关注点": read_text_file(os.path.join(analysis_output_dir, "investment_overview.txt")) or investment_focus,
-        "关键财务指标": metric_body,
         "公司概览": read_text_file(os.path.join(analysis_output_dir, "company_overview.txt")),
         "财务表现分析": read_text_file(os.path.join(analysis_output_dir, "tagline.txt")),
         "估值分析": read_text_file(os.path.join(analysis_output_dir, "valuation_overview.txt")),
         "同行公司比较": read_text_file(os.path.join(analysis_output_dir, "competitor_analysis.txt")) or peer_body,
         "主要风险": read_text_file(os.path.join(analysis_output_dir, "risks.txt")),
         "新闻与催化因素": read_text_file(os.path.join(analysis_output_dir, "news_summary.txt")),
+        "关键财务指标": metric_body,
+        "报告数据覆盖说明": data_coverage,
     }
 
     blocks = [
         feishu_text_block(f"{req.company_name}（{req.ticker}）股票研究报告", bold=True),
         feishu_text_block(
-            "本报告由 FinRobot 自动生成。飞书文档保留核心摘要，完整图表和表格请打开专业 HTML 研报。内容仅供投研参考，不构成投资建议。"
+            "本报告由 FinRobot 自动生成。飞书文档保留完整中文正文、关键财务指标和投研结论；专业 HTML 研报提供图表、表格和分节排版。内容仅供投研参考，不构成投资建议。"
         ),
     ]
     for title, body in sections.items():
@@ -972,7 +975,7 @@ async def feishu_events(payload: Dict, background_tasks: BackgroundTasks):
         await reply_feishu_message(
             message_id,
             "请发送：/report AAPL Apple Inc | MSFT GOOGL\n"
-            "竖线后面是可选的同行股票代码。报告完成后会生成中文飞书文档并回传链接。",
+            "竖线后面是可选的同行股票代码。/report 会生成完整中文研报和专业 HTML；/fastreport 用于快速生成结构化摘要。",
         )
         return {"success": True, "ignored": "unsupported command"}
 
@@ -982,7 +985,7 @@ async def feishu_events(payload: Dict, background_tasks: BackgroundTasks):
     status_link = public_url(f"/api/feishu/status/{task_id}")
     await reply_feishu_message(
         message_id,
-        f"已开始生成 {req.company_name}（{req.ticker}）中文投研文档。\n"
+        f"已开始生成 {req.company_name}（{req.ticker}）完整中文投研文档和专业 HTML 研报。\n"
         f"任务 ID：{task_id}\n状态：{status_link}",
     )
     return {"success": True, "task_id": task_id}
@@ -1159,6 +1162,7 @@ def execute_analysis_pipeline(task_id: str, req: AnalysisRequest):
         "--risks-file", os.path.join(base_output_dir, "risks.txt"),
         "--competitor-analysis-file", os.path.join(base_output_dir, "competitor_analysis.txt"),
         "--major-takeaways-file", os.path.join(base_output_dir, "major_takeaways.txt"),
+        "--news-summary-file", os.path.join(base_output_dir, "news_summary.txt"),
         "--output-dir", report_output_dir,
         "--config-file", config_file,
     ]
@@ -1187,6 +1191,10 @@ def execute_analysis_pipeline(task_id: str, req: AnalysisRequest):
         enhanced_news_file = os.path.join(base_output_dir, "enhanced_news.json")
         if os.path.exists(enhanced_news_file):
             cmd_report.extend(["--enhanced-news-file", enhanced_news_file])
+
+    retail_sentiment_file = os.path.join(base_output_dir, "retail_sentiment.json")
+    if os.path.exists(retail_sentiment_file):
+        cmd_report.extend(["--retail-sentiment-file", retail_sentiment_file])
     
     if req.peers:
         cmd_report.extend([
