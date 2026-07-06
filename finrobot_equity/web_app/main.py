@@ -398,6 +398,8 @@ tasks = {}
 FEISHU_APP_ID = os.getenv("FEISHU_APP_ID", "")
 FEISHU_APP_SECRET = os.getenv("FEISHU_APP_SECRET", "")
 FEISHU_VERIFICATION_TOKEN = os.getenv("FEISHU_VERIFICATION_TOKEN", "")
+FEISHU_BOT_OPEN_ID = os.getenv("FEISHU_BOT_OPEN_ID", "").strip()
+FEISHU_BOT_NAME = os.getenv("FEISHU_BOT_NAME", "FinRobot").strip() or "FinRobot"
 FEISHU_DOC_BASE_URL = os.getenv("FEISHU_DOC_BASE_URL", "https://feishu.cn/docx")
 FEISHU_WIKI_PARENT_TOKEN = os.getenv("FEISHU_WIKI_PARENT_TOKEN", "")
 FEISHU_WIKI_SPACE_ID = os.getenv("FEISHU_WIKI_SPACE_ID", "")
@@ -408,6 +410,7 @@ OBSIDIAN_GITHUB_REPO = os.getenv("OBSIDIAN_GITHUB_REPO", "Mad12345-qw/obsidian-k
 OBSIDIAN_GITHUB_BRANCH = os.getenv("OBSIDIAN_GITHUB_BRANCH", "main")
 OBSIDIAN_FINROBOT_FOLDER = os.getenv("OBSIDIAN_FINROBOT_FOLDER", "finrobot-reports").strip("/\\") or "finrobot-reports"
 OBSIDIAN_GITHUB_TIMEOUT = float(os.getenv("OBSIDIAN_GITHUB_TIMEOUT_MS", "30000")) / 1000
+_FEISHU_BOT_OPEN_ID_CACHE = FEISHU_BOT_OPEN_ID
 FINANCIAL_LABEL_ZH = {
     "Revenue": "营收",
     "Cost of Operations": "营业成本",
@@ -668,6 +671,91 @@ async def get_feishu_tenant_access_token() -> Optional[str]:
         response.raise_for_status()
         data = response.json()
         return data.get("tenant_access_token")
+
+
+async def get_feishu_bot_open_id() -> str:
+    """Return the app bot open_id when available."""
+    global _FEISHU_BOT_OPEN_ID_CACHE
+    if _FEISHU_BOT_OPEN_ID_CACHE:
+        return _FEISHU_BOT_OPEN_ID_CACHE
+
+    try:
+        token = await get_feishu_tenant_access_token()
+        if not token:
+            return ""
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                "https://open.feishu.cn/open-apis/bot/v3/info",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            if response.status_code >= 400:
+                logger.warning(
+                    "Feishu bot info failed: status=%s body=%s",
+                    response.status_code,
+                    response.text[:1000],
+                )
+                return ""
+            data = response.json()
+    except Exception as e:
+        logger.warning(f"Failed to fetch Feishu bot info: {e}")
+        return ""
+
+    bot_info = data.get("bot") or data.get("data", {}).get("bot") or data.get("data", {})
+    open_id = (bot_info or {}).get("open_id") or (bot_info or {}).get("bot_open_id") or ""
+    if open_id:
+        _FEISHU_BOT_OPEN_ID_CACHE = open_id
+    return open_id
+
+
+def _mention_ids(mention: Dict) -> List[str]:
+    ids = []
+    mention_id = mention.get("id")
+    if isinstance(mention_id, dict):
+        ids.extend(str(value) for value in mention_id.values() if value)
+    elif mention_id:
+        ids.append(str(mention_id))
+
+    for key in ("open_id", "user_id", "union_id", "tenant_key"):
+        value = mention.get(key)
+        if value:
+            ids.append(str(value))
+    return ids
+
+
+def feishu_message_mentions_bot(message: Dict, bot_open_id: str = "") -> bool:
+    mentions = message.get("mentions") or []
+    raw_message = json.dumps(message, ensure_ascii=False)
+
+    for mention in mentions:
+        mention_ids = _mention_ids(mention)
+        if bot_open_id and bot_open_id in mention_ids:
+            return True
+
+        mention_name = str(
+            mention.get("name")
+            or mention.get("text")
+            or mention.get("mention_name")
+            or mention.get("display_name")
+            or ""
+        ).lstrip("@")
+        if mention_name and mention_name.lower() == FEISHU_BOT_NAME.lower():
+            return True
+
+    if bot_open_id and bot_open_id in raw_message and "<at" in raw_message:
+        return True
+    if FEISHU_BOT_NAME and f">{FEISHU_BOT_NAME}<" in raw_message and "<at" in raw_message:
+        return True
+    return False
+
+
+async def should_handle_feishu_message(message: Dict) -> bool:
+    chat_type = (message.get("chat_type") or "").lower()
+    if chat_type not in {"group", "topic_group"}:
+        return True
+
+    bot_open_id = await get_feishu_bot_open_id()
+    return feishu_message_mentions_bot(message, bot_open_id)
 
 
 async def reply_feishu_message(message_id: Optional[str], text: str):
@@ -1364,6 +1452,7 @@ async def health_check():
         "status": "ok",
         "service": "finrobot-equity",
         "feishu_configured": bool(FEISHU_APP_ID and FEISHU_APP_SECRET),
+        "feishu_bot_open_id_configured": bool(_FEISHU_BOT_OPEN_ID_CACHE),
     }
 
 
@@ -1381,6 +1470,15 @@ async def feishu_events(payload: Dict, background_tasks: BackgroundTasks):
     message = event.get("message", {})
     if not message:
         return {"success": True, "ignored": "no message event"}
+
+    if not await should_handle_feishu_message(message):
+        logger.info(
+            "Ignored Feishu group message without %s mention: message_id=%s chat_id=%s",
+            FEISHU_BOT_NAME,
+            message.get("message_id"),
+            message.get("chat_id"),
+        )
+        return {"success": True, "ignored": "group message without bot mention"}
 
     message_id = message.get("message_id")
     text = extract_feishu_text(message)
