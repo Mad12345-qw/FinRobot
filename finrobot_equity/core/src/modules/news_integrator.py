@@ -430,8 +430,9 @@ class NewsIntegrator:
 
 
 # 增强版新闻获取函数
-def get_enhanced_company_news(ticker: str, api_key: str, days_back: int = 5, 
-                              limit: int = 50) -> Dict[str, Any]:
+def get_enhanced_company_news(ticker: str, api_key: str, days_back: int = 5,
+                              limit: int = 50, finnhub_api_key: str = None,
+                              company_name: str = None) -> Dict[str, Any]:
     """
     增强版公司新闻获取函数
     
@@ -455,7 +456,7 @@ def get_enhanced_company_news(ticker: str, api_key: str, days_back: int = 5,
         from_date = start_date.strftime('%Y-%m-%d')
         to_date = end_date.strftime('%Y-%m-%d')
         
-        # 获取新闻
+        # 获取新闻：优先 FMP，权限失败或空结果时用 Finnhub 兜底。
         url = "https://financialmodelingprep.com/api/v3/stock_news"
         params = {
             'tickers': ticker,
@@ -464,24 +465,61 @@ def get_enhanced_company_news(ticker: str, api_key: str, days_back: int = 5,
             'limit': limit,
             'apikey': api_key
         }
-        
+
         logger.info(f"Fetching enhanced news for {ticker}...")
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-        raw_news = response.json()
-        
+        raw_news = []
+        news_source = "FMP"
+        try:
+            response = requests.get(url, params=params, timeout=30)
+            response.raise_for_status()
+            raw_news = response.json()
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"FMP enhanced news unavailable for {ticker}: {e}")
+
+        if not raw_news and finnhub_api_key:
+            logger.info(f"Falling back to Finnhub enhanced news for {ticker}...")
+            finnhub_params = {
+                'symbol': ticker,
+                'from': from_date,
+                'to': to_date,
+                'token': finnhub_api_key
+            }
+            finnhub_response = requests.get(
+                "https://finnhub.io/api/v1/company-news",
+                params=finnhub_params,
+                timeout=30
+            )
+            finnhub_response.raise_for_status()
+            finnhub_news = finnhub_response.json() or []
+            raw_news = []
+            for article in finnhub_news[:limit]:
+                timestamp = article.get('datetime')
+                published_date = ""
+                if timestamp:
+                    published_date = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
+                raw_news.append({
+                    'symbol': ticker,
+                    'title': article.get('headline'),
+                    'publishedDate': published_date,
+                    'text': article.get('summary'),
+                    'site': article.get('source'),
+                    'url': article.get('url')
+                })
+            news_source = "Finnhub"
+
         if not raw_news:
             logger.warning(f"No news found for {ticker}")
             return {
                 'ticker': ticker,
                 'articles': [],
-                'summary': f"No recent news found for {ticker}.",
+                'summary': f"本次未获取到 {ticker} 的近期新闻。请检查 FMP/Finnhub 新闻接口权限、额度或标的覆盖范围。",
                 'categorized': {},
-                'sentiment_overview': {'positive': 0, 'negative': 0, 'neutral': 0}
+                'sentiment_overview': {'positive': 0, 'negative': 0, 'neutral': 0},
+                'source': news_source
             }
-        
+
         # 使用NewsIntegrator处理
-        integrator = NewsIntegrator(ticker, api_key)
+        integrator = NewsIntegrator(ticker, api_key, company_name=company_name)
         integrator.set_news_data(raw_news)
         integrator.process_news(days_back)
         
@@ -503,8 +541,9 @@ def get_enhanced_company_news(ticker: str, api_key: str, days_back: int = 5,
                 'negative': sentiments.count('negative'),
                 'neutral': sentiments.count('neutral')
             },
-            'high_impact': [{'title': a.title, 'category': a.category, 
-                           'sentiment': a.sentiment} 
+            'source': news_source,
+            'high_impact': [{'title': a.title, 'category': a.category,
+                           'sentiment': a.sentiment}
                           for a in integrator.get_high_impact_news()]
         }
         
@@ -513,7 +552,7 @@ def get_enhanced_company_news(ticker: str, api_key: str, days_back: int = 5,
         return {
             'ticker': ticker,
             'articles': [],
-            'summary': f"Error fetching news for {ticker}: {str(e)}",
+            'summary': f"本次新闻源请求失败：{str(e)}。请检查 FMP/Finnhub 接口权限、额度或网络状态。",
             'categorized': {},
             'sentiment_overview': {'positive': 0, 'negative': 0, 'neutral': 0}
         }

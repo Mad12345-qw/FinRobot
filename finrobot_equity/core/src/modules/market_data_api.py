@@ -24,6 +24,14 @@ def _get_fmp_json(urls: list[str], label: str):
     return None
 
 
+def _first_valid_metric(row, names: list[str]):
+    for name in names:
+        value = row.get(name)
+        if value is not None and pd.notna(value):
+            return value
+    return None
+
+
 def fetch_yfinance_volume(ticker: str, start_date: str, end_date: str) -> pd.DataFrame | None:
     """Fetches historical trading volume data using yfinance."""
     try:
@@ -196,7 +204,10 @@ def combine_peer_financial_data(tickers: list[str], api_key: str, years_limit: i
             for _, row in key_metrics_df.iterrows():
                 year = row["year"]
                 if year not in ticker_data: ticker_data[year] = {}
-                ticker_data[year]["EV/EBITDA"] = row.get("enterpriseValueOverEBITDA")
+                ticker_data[year]["EV/EBITDA"] = _first_valid_metric(
+                    row,
+                    ["enterpriseValueOverEBITDA", "evToEBITDA", "evEbitda", "evEbitdaRatio"]
+                )
         
         if ticker_data:
             all_peers_data[ticker] = ticker_data
@@ -214,7 +225,7 @@ def combine_peer_financial_data(tickers: list[str], api_key: str, years_limit: i
     ev_ebitda_records = []
     for ticker, yearly_data in all_peers_data.items():
         for year, metrics in yearly_data.items():
-            if "EV/EBITDA" in metrics and metrics["EV/EBITDA"] is not None:
+            if "EV/EBITDA" in metrics and metrics["EV/EBITDA"] is not None and pd.notna(metrics["EV/EBITDA"]):
                 ev_ebitda_records.append({"ticker": ticker, "year": year, "EV/EBITDA": metrics["EV/EBITDA"]})
     df_ev_ebitda_all = pd.DataFrame(ev_ebitda_records)
     df_ev_ebitda_pivot = pd.DataFrame()
@@ -677,7 +688,56 @@ def get_technical_indicators(ticker: str, api_key: str) -> dict:
     return result
 
 
-def get_company_news(ticker: str, api_key: str, days_back: int = 5, limit: int = 50) -> list[dict] | None:
+def get_finnhub_company_news(ticker: str, api_key: str, days_back: int = 5, limit: int = 50) -> list[dict] | None:
+    """Fetch recent company news from Finnhub and normalize it to the FMP-like schema."""
+    if not api_key:
+        return None
+
+    try:
+        end_date = datetime.datetime.now()
+        start_date = end_date - datetime.timedelta(days=days_back)
+        params = {
+            "symbol": ticker,
+            "from": start_date.strftime("%Y-%m-%d"),
+            "to": end_date.strftime("%Y-%m-%d"),
+            "token": api_key,
+        }
+        print(f"Fetching Finnhub news for {ticker} from {params['from']} to {params['to']}...")
+        response = requests.get("https://finnhub.io/api/v1/company-news", params=params, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+
+        if not data:
+            print(f"No news data returned from Finnhub for {ticker}.")
+            return None
+
+        filtered_news = []
+        for article in data[:limit]:
+            timestamp = article.get("datetime")
+            published_date = ""
+            if timestamp:
+                published_date = datetime.datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+
+            filtered_news.append({
+                "symbol": ticker,
+                "title": article.get("headline"),
+                "publishedDate": published_date,
+                "text": article.get("summary"),
+                "site": article.get("source"),
+                "url": article.get("url"),
+            })
+
+        print(f"Successfully fetched {len(filtered_news)} Finnhub news articles for {ticker}")
+        return filtered_news
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching Finnhub news for {ticker}: {e}")
+        return None
+    except Exception as e:
+        print(f"Unexpected error fetching Finnhub news for {ticker}: {e}")
+        return None
+
+
+def get_company_news(ticker: str, api_key: str, days_back: int = 5, limit: int = 50, finnhub_api_key: str | None = None) -> list[dict] | None:
     """
     Fetches recent company news from FMP API.
     
@@ -712,7 +772,7 @@ def get_company_news(ticker: str, api_key: str, days_back: int = 5, limit: int =
         }
         
         print(f"Fetching news for {ticker} from {from_date} to {to_date}...")
-        response = requests.get(url, params=params)
+        response = requests.get(url, params=params, timeout=30)
         response.raise_for_status()
         data = response.json()
         
@@ -738,6 +798,9 @@ def get_company_news(ticker: str, api_key: str, days_back: int = 5, limit: int =
         
     except requests.exceptions.RequestException as e:
         print(f"Error fetching news for {ticker}: {e}")
+        if finnhub_api_key:
+            print(f"Falling back to Finnhub company news for {ticker}...")
+            return get_finnhub_company_news(ticker, finnhub_api_key, days_back=days_back, limit=limit)
         return None
     except Exception as e:
         print(f"Unexpected error fetching news for {ticker}: {e}")

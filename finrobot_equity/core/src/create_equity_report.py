@@ -30,7 +30,7 @@ from modules.chart_generator import (
 from modules.market_data_api import get_comprehensive_company_metrics, get_technical_indicators
 
 # Import the single, unified text generation function
-from modules.text_generator_agents import generate_text_section
+from modules.text_generator_agents import generate_text_section, _get_fallback_text
 
 # 新增模块导入
 from modules.enhanced_chart_generator import EnhancedChartGenerator, ChartConfig
@@ -279,10 +279,10 @@ def generate_major_takeaways(analysis_df: pd.DataFrame, company_ticker: str) -> 
 
 
 def validate_and_fix_text_content(text_content: str, text_type: str, company_name: str, company_ticker: str) -> str:
-    """Validate text content and provide basic validation without fallbacks."""
+    """Validate text content and provide a stable Chinese fallback when missing."""
     if not text_content or text_content.strip() == "":
         print(f"⚠️ Warning: {text_type} is empty")
-        return ""
+        return _get_fallback_text(text_type, company_name)
     
     # Check if content looks like CSV data (especially for competitor_analysis and major_takeaways)
     if text_type in ["competitor_analysis", "major_takeaways"]:

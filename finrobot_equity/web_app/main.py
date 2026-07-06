@@ -53,6 +53,7 @@ def ensure_runtime_config():
         "OPENAI_MODEL",
         "ADANOS_API_KEY",
         "ADANOS_BASE_URL",
+        "FINNHUB_API_KEY",
     ]
     config_path = os.path.join(CONFIG_DIR, "config.ini")
     has_env_config = any(os.getenv(name) for name in env_names)
@@ -69,6 +70,7 @@ def ensure_runtime_config():
         "openai_model": os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
         "adanos_api_key": os.getenv("ADANOS_API_KEY", ""),
         "adanos_base_url": os.getenv("ADANOS_BASE_URL", "https://api.adanos.org"),
+        "finnhub_api_key": os.getenv("FINNHUB_API_KEY", ""),
     }
     with open(config_path, "w", encoding="utf-8") as f:
         config.write(f)
@@ -526,10 +528,10 @@ def parse_feishu_report_request(text: str) -> Optional[AnalysisRequest]:
         ticker=ticker,
         company_name=company_name,
         peers=peers,
-        generate_text=not fast_mode,
+        generate_text=True,
         generate_pdf=False,
         generate_html_report=True,
-        enable_enhanced_news=not fast_mode,
+        enable_enhanced_news=True,
     )
 
 

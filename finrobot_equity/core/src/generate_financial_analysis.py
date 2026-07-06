@@ -87,6 +87,7 @@ def main():
     try:
         config = load_config(args.config_file)
         fmp_api_key = get_api_key(config, section="API_KEYS", key="fmp_api_key")
+        finnhub_api_key = config.get("API_KEYS", "finnhub_api_key", fallback=os.getenv("FINNHUB_API_KEY", ""))
         adanos_api_key = config.get("API_KEYS", "adanos_api_key", fallback=adanos_api_key)
         adanos_base_url = config.get("API_KEYS", "adanos_base_url", fallback=adanos_base_url)
         if args.generate_text_sections:
@@ -236,7 +237,9 @@ def main():
                     ticker=args.company_ticker,
                     api_key=fmp_api_key,
                     days_back=args.news_days_back,
-                    limit=args.news_limit
+                    limit=args.news_limit,
+                    finnhub_api_key=finnhub_api_key,
+                    company_name=args.company_name
                 )
                 company_news = enhanced_news_data.get('articles', [])
                 
@@ -251,13 +254,18 @@ def main():
                 with open(news_summary_path, 'w', encoding='utf-8') as f:
                     f.write(enhanced_news_data.get('summary', ''))
                 print(f"Saved news summary to: {news_summary_path}")
+                news_summary_txt_path = os.path.join(output_dir, "news_summary.txt")
+                with open(news_summary_txt_path, 'w', encoding='utf-8') as f:
+                    f.write(enhanced_news_data.get('summary', ''))
+                print(f"Saved news summary to: {news_summary_txt_path}")
             else:
                 # 使用原始新闻获取
                 company_news = get_company_news(
                     ticker=args.company_ticker,
                     api_key=fmp_api_key,
                     days_back=args.news_days_back,
-                    limit=args.news_limit
+                    limit=args.news_limit,
+                    finnhub_api_key=finnhub_api_key
                 )
             
             if company_news:
@@ -508,7 +516,7 @@ def main():
         "files_generated": {
             "main_analysis": args.output_csv_name,
             "peer_ebitda": "peer_ebitda_comparison.csv" if projected_peer_ebitda is not None else None,
-            "peer_ev_ebitda": "peer_ev_ebitda_comparison.csv" if df_ev_ebitda_peers is not None else None,
+            "peer_ev_ebitda": "peer_ev_ebitda_comparison.csv" if df_ev_ebitda_peers is not None and not df_ev_ebitda_peers.empty else None,
             "company_news": "company_news.json" if company_news else None,
             "enhanced_news": "enhanced_news.json" if enhanced_news_data else None,
             "sensitivity_analysis": "sensitivity_analysis.json" if sensitivity_results else None,
