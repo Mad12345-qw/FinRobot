@@ -120,13 +120,28 @@ def get_log_file_path(task_id: str) -> str:
     """获取任务日志文件路径"""
     return os.path.join(LOGS_DIR, f"task_{task_id}.log")
 
+def redact_sensitive_text(message: str) -> str:
+    """Redact API keys and bearer-style secrets before logs are persisted or returned."""
+    text = str(message or "")
+    patterns = [
+        (r"(?i)(apikey=)[^&\s]+", r"\1[REDACTED]"),
+        (r"(?i)(api_key=)[^&\s]+", r"\1[REDACTED]"),
+        (r"(?i)(authorization:\s*bearer\s+)[A-Za-z0-9._\-]+", r"\1[REDACTED]"),
+        (r"\b(sk-[A-Za-z0-9_\-]{12,})\b", "[REDACTED]"),
+        (r"\b(rnd_[A-Za-z0-9_\-]{12,})\b", "[REDACTED]"),
+    ]
+    for pattern, replacement in patterns:
+        text = re.sub(pattern, replacement, text)
+    return text
+
 def write_log_to_file(task_id: str, message: str):
     """将日志写入文件"""
     log_path = get_log_file_path(task_id)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    safe_message = redact_sensitive_text(message)
     try:
         with open(log_path, "a", encoding="utf-8") as f:
-            f.write(f"[{timestamp}] {message}\n")
+            f.write(f"[{timestamp}] {safe_message}\n")
     except Exception as e:
         logger.warning(f"Failed to write log to file: {e}")
 
@@ -137,18 +152,19 @@ def read_log_from_file(task_id: str) -> List[str]:
         return []
     try:
         with open(log_path, "r", encoding="utf-8") as f:
-            return [line.strip() for line in f.readlines()]
+            return [redact_sensitive_text(line.strip()) for line in f.readlines()]
     except Exception as e:
         logger.warning(f"Failed to read log from file: {e}")
         return []
 
 def append_task_log(task_id: str, message: str):
     """同时写入内存和文件的日志函数"""
+    safe_message = redact_sensitive_text(message)
     # 写入内存
     if task_id in tasks:
-        tasks[task_id]["logs"].append(message)
+        tasks[task_id]["logs"].append(safe_message)
     # 写入文件
-    write_log_to_file(task_id, message)
+    write_log_to_file(task_id, safe_message)
 
 # ============== Auth Routes ==============
 
