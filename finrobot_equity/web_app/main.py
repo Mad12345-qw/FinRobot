@@ -489,51 +489,122 @@ def slugify_report_part(value: str, fallback: str = "report") -> str:
     return (text or fallback)[:80]
 
 
-def parse_feishu_report_request(text: str) -> Optional[AnalysisRequest]:
-    clean_text = re.sub(r"<at[^>]*>.*?</at>", "", text or "", flags=re.IGNORECASE).strip()
-    lower_text = clean_text.lower()
+TICKER_STOPWORDS = {
+    "AI", "API", "APP", "CSV", "DCF", "EV", "FMP", "HTML", "HTTP", "HTTPS", "JSON",
+    "LLM", "PDF", "PE", "PEG", "PS", "ROA", "ROE", "ROI", "SEC", "TTM", "URL",
+    "VS", "REPORT", "RESEARCH", "ANALYSIS", "FASTREPORT",
+}
 
-    has_report_prefix = False
-    fast_mode = False
-    for prefix in ("/fastreport", "fastreport", "/report", "report"):
-        if lower_text.startswith(prefix):
-            clean_text = clean_text[len(prefix):].strip()
-            has_report_prefix = True
-            fast_mode = "fast" in prefix
-            break
+KNOWN_COMPANY_NAMES = {
+    "AAPL": "Apple Inc.",
+    "AMZN": "Amazon.com Inc.",
+    "BABA": "Alibaba Group Holding Limited",
+    "BAC": "Bank of America Corporation",
+    "C": "Citigroup Inc.",
+    "GOOGL": "Alphabet Inc.",
+    "JD": "JD.com Inc.",
+    "JPM": "JPMorgan Chase & Co.",
+    "META": "Meta Platforms Inc.",
+    "MSFT": "Microsoft Corporation",
+    "NVDA": "NVIDIA Corporation",
+    "PDD": "PDD Holdings Inc",
+    "SE": "Sea Limited",
+    "TSLA": "Tesla Inc.",
+    "WFC": "Wells Fargo & Company",
+}
 
-    if not has_report_prefix or not clean_text or lower_text in {"/help", "help"}:
-        return None
 
-    command_parts = [part.strip() for part in clean_text.split("|", 1)]
-    company_part = command_parts[0]
-    peer_part = command_parts[1] if len(command_parts) > 1 else ""
-    tokens = company_part.split()
+def extract_tickers_from_text(value: str) -> List[str]:
+    tickers = []
+    for match in re.finditer(r"(?<![A-Za-z0-9.\-])([A-Za-z][A-Za-z0-9.\-]{0,9})(?![A-Za-z0-9.\-])", value or ""):
+        ticker = match.group(1).upper().strip(".-")
+        if (
+            re.match(r"^[A-Z][A-Z0-9.\-]{0,9}$", ticker)
+            and ticker not in TICKER_STOPWORDS
+            and ticker not in tickers
+        ):
+            tickers.append(ticker)
+    return tickers
 
-    if not tokens:
-        return None
 
-    ticker = re.sub(r"[^A-Za-z.\-]", "", tokens[0]).upper()
+def build_analysis_request(ticker: str, company_name: str = "", peers: Optional[List[str]] = None) -> Optional[AnalysisRequest]:
+    ticker = re.sub(r"[^A-Za-z0-9.\-]", "", ticker or "").upper()
     if not re.match(r"^[A-Z][A-Z0-9.\-]{0,9}$", ticker):
         return None
 
-    peers = [
-        re.sub(r"[^A-Za-z.\-]", "", peer).upper()
-        for peer in re.split(r"[\s,]+", peer_part)
-        if peer.strip()
-    ]
-    peers = [peer for peer in peers if re.match(r"^[A-Z][A-Z0-9.\-]{0,9}$", peer)]
-    company_name = " ".join(tokens[1:]).strip() or ticker
+    clean_peers = []
+    for peer in peers or []:
+        peer_ticker = re.sub(r"[^A-Za-z0-9.\-]", "", peer or "").upper()
+        if (
+            re.match(r"^[A-Z][A-Z0-9.\-]{0,9}$", peer_ticker)
+            and peer_ticker != ticker
+            and peer_ticker not in clean_peers
+            and peer_ticker not in TICKER_STOPWORDS
+        ):
+            clean_peers.append(peer_ticker)
 
     return AnalysisRequest(
         ticker=ticker,
-        company_name=company_name,
-        peers=peers,
+        company_name=(company_name or KNOWN_COMPANY_NAMES.get(ticker) or ticker).strip(),
+        peers=clean_peers,
         generate_text=True,
         generate_pdf=False,
         generate_html_report=True,
         enable_enhanced_news=True,
     )
+
+
+def parse_command_report_request(clean_text: str, lower_text: str) -> Optional[AnalysisRequest]:
+    for prefix in ("/fastreport", "fastreport", "/report", "report"):
+        if lower_text.startswith(prefix):
+            command_text = clean_text[len(prefix):].strip()
+            if not command_text:
+                return None
+
+            command_parts = [part.strip() for part in command_text.split("|", 1)]
+            company_part = command_parts[0]
+            peer_part = command_parts[1] if len(command_parts) > 1 else ""
+            tokens = company_part.split()
+            if not tokens:
+                return None
+
+            ticker = re.sub(r"[^A-Za-z0-9.\-]", "", tokens[0]).upper()
+            company_name = " ".join(tokens[1:]).strip()
+            peers = extract_tickers_from_text(peer_part)
+            return build_analysis_request(ticker, company_name, peers)
+    return None
+
+
+def parse_natural_report_request(clean_text: str) -> Optional[AnalysisRequest]:
+    if not re.search(
+        r"(研报|投研|研究报告|报告|分析|估值|同行|对比|比较|竞品|report|research|analysis|valuation|compare|peer|peers)",
+        clean_text,
+        flags=re.IGNORECASE,
+    ):
+        return None
+
+    tickers = extract_tickers_from_text(clean_text)
+    if not tickers:
+        return None
+
+    ticker = tickers[0]
+    peer_text = ""
+    peer_match = re.search(r"(?:\||同行|对比|比较|竞品|peer(?:s)?|vs\.?|versus)[：:\s]*(.+)$", clean_text, flags=re.IGNORECASE)
+    if peer_match:
+        peer_text = peer_match.group(1)
+
+    peers = extract_tickers_from_text(peer_text) if peer_text else tickers[1:]
+    return build_analysis_request(ticker, KNOWN_COMPANY_NAMES.get(ticker, ticker), peers)
+
+
+def parse_feishu_report_request(text: str) -> Optional[AnalysisRequest]:
+    clean_text = re.sub(r"<at[^>]*>.*?</at>", "", text or "", flags=re.IGNORECASE).strip()
+    lower_text = clean_text.lower()
+
+    if not clean_text or lower_text in {"/help", "help"}:
+        return None
+
+    return parse_command_report_request(clean_text, lower_text) or parse_natural_report_request(clean_text)
 
 
 async def get_feishu_tenant_access_token() -> Optional[str]:
@@ -1269,8 +1340,9 @@ async def feishu_events(payload: Dict, background_tasks: BackgroundTasks):
     if not req:
         await reply_feishu_message(
             message_id,
-            "请发送：/report AAPL Apple Inc | MSFT GOOGL\n"
-            "竖线后面是可选的同行股票代码。/report 会生成专业 HTML 研报，并在飞书知识库创建索引页；/fastreport 用于快速生成结构化 HTML。",
+            "你可以直接说：帮我生成 PDD 的投研报告，对比 BABA JD SE\n"
+            "也可以用指令：/fastreport PDD PDD Holdings Inc | BABA JD SE\n"
+            "我会生成专业 HTML 研报，并同步飞书知识库索引和 Obsidian。",
         )
         return {"success": True, "ignored": "unsupported command"}
 
