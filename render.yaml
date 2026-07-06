@@ -36,3 +36,13 @@ services:
         sync: false
       - key: ADANOS_API_KEY
         sync: false
+      - key: OBSIDIAN_SYNC_ENABLED
+        value: "true"
+      - key: OBSIDIAN_GITHUB_REPO
+        value: Mad12345-qw/obsidian-knowledge-sync
+      - key: OBSIDIAN_GITHUB_BRANCH
+        value: main
+      - key: OBSIDIAN_FINROBOT_FOLDER
+        value: finrobot-reports
+      - key: OBSIDIAN_GITHUB_TOKEN
+        sync: false

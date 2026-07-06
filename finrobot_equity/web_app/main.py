@@ -10,9 +10,11 @@ import secrets
 import configparser
 import re
 import csv
+import base64
 import httpx
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict
+from urllib.parse import quote
 from fastapi import FastAPI, Request, BackgroundTasks, Depends, HTTPException, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -397,6 +399,12 @@ FEISHU_DOC_BASE_URL = os.getenv("FEISHU_DOC_BASE_URL", "https://feishu.cn/docx")
 FEISHU_WIKI_PARENT_TOKEN = os.getenv("FEISHU_WIKI_PARENT_TOKEN", "")
 FEISHU_WIKI_SPACE_ID = os.getenv("FEISHU_WIKI_SPACE_ID", "")
 PUBLIC_BASE_URL = os.getenv("FINROBOT_PUBLIC_URL") or os.getenv("RENDER_EXTERNAL_URL", "")
+OBSIDIAN_SYNC_ENABLED = os.getenv("OBSIDIAN_SYNC_ENABLED", "").lower() in {"1", "true", "yes", "on"}
+OBSIDIAN_GITHUB_TOKEN = os.getenv("OBSIDIAN_GITHUB_TOKEN") or os.getenv("GITHUB_BACKUP_TOKEN", "")
+OBSIDIAN_GITHUB_REPO = os.getenv("OBSIDIAN_GITHUB_REPO", "Mad12345-qw/obsidian-knowledge-sync")
+OBSIDIAN_GITHUB_BRANCH = os.getenv("OBSIDIAN_GITHUB_BRANCH", "main")
+OBSIDIAN_FINROBOT_FOLDER = os.getenv("OBSIDIAN_FINROBOT_FOLDER", "finrobot-reports").strip("/\\") or "finrobot-reports"
+OBSIDIAN_GITHUB_TIMEOUT = float(os.getenv("OBSIDIAN_GITHUB_TIMEOUT_MS", "30000")) / 1000
 FINANCIAL_LABEL_ZH = {
     "Revenue": "营收",
     "Cost of Operations": "营业成本",
@@ -464,12 +472,18 @@ class AnalysisRequest(BaseModel):
     enable_enhanced_news: bool = True
     enable_enhanced_charts: bool = True
     enable_valuation_analysis: bool = True
+    enable_report_text_regeneration: bool = False
 
 
 def public_url(path: str) -> str:
     if not PUBLIC_BASE_URL:
         return path
     return f"{PUBLIC_BASE_URL.rstrip('/')}/{path.lstrip('/')}"
+
+
+def slugify_report_part(value: str, fallback: str = "report") -> str:
+    text = re.sub(r"[^A-Za-z0-9._-]+", "-", str(value or "").strip()).strip("-._")
+    return (text or fallback)[:80]
 
 
 def parse_feishu_report_request(text: str) -> Optional[AnalysisRequest]:
@@ -793,7 +807,7 @@ def build_chinese_report_blocks(req: AnalysisRequest, analysis_output_dir: str, 
     peer_ev_rows = read_csv_summary(os.path.join(analysis_output_dir, "peer_ev_ebitda_comparison.csv"), "ticker")
 
     metric_body = "\n".join(f"- {row}" for row in metric_rows[:10])
-    peer_body = "\n".join(f"- {row}" for row in peer_ebitda_rows + peer_ev_rows)
+    peer_body = "\n".join(f"- {row}" for row in (peer_ebitda_rows + peer_ev_rows)[:8])
 
     fallback_takeaways = ""
     if metric_rows:
@@ -821,29 +835,41 @@ def build_chinese_report_blocks(req: AnalysisRequest, analysis_output_dir: str, 
     professional_files = [f for f in html_files if "Professional_Equity_Report" in f]
     selected_html = (professional_files or html_files or [None])[0]
     report_link = public_url(f"/output/{req.ticker}/report/{selected_html}") if selected_html else ""
+    takeaways = read_text_file(os.path.join(analysis_output_dir, "major_takeaways.txt")) or fallback_takeaways
+    overview = read_text_file(os.path.join(analysis_output_dir, "investment_overview.txt")) or investment_focus
+    valuation = read_text_file(os.path.join(analysis_output_dir, "valuation_overview.txt"))
+
+    intro_parts = [
+        f"本页是 {req.company_name}（{req.ticker}）FinRobot HTML 股票研究报告的飞书知识库索引页。",
+        "主报告只保留一份专业 HTML，飞书不再生成缩水版正文；请打开 HTML 查看完整图表、表格、估值、同行比较、风险和催化剂模块。",
+    ]
+    if report_link:
+        intro_parts.append(f"HTML 研报链接：{report_link}")
 
     sections = {
-        "专业 HTML 研报": report_link,
-        "核心结论": read_text_file(os.path.join(analysis_output_dir, "major_takeaways.txt")) or fallback_takeaways,
-        "投资关注点": read_text_file(os.path.join(analysis_output_dir, "investment_overview.txt")) or investment_focus,
-        "公司概览": read_text_file(os.path.join(analysis_output_dir, "company_overview.txt")),
-        "财务表现分析": read_text_file(os.path.join(analysis_output_dir, "tagline.txt")),
-        "估值分析": read_text_file(os.path.join(analysis_output_dir, "valuation_overview.txt")),
-        "同行公司比较": read_text_file(os.path.join(analysis_output_dir, "competitor_analysis.txt")) or peer_body,
-        "主要风险": read_text_file(os.path.join(analysis_output_dir, "risks.txt")),
-        "新闻与催化因素": read_text_file(os.path.join(analysis_output_dir, "news_summary.txt")),
-        "关键财务指标": metric_body,
-        "报告数据覆盖说明": data_coverage,
+        "HTML 研报入口": report_link or "HTML 研报文件未找到，请查看任务状态和 Render 输出目录。",
+        "研报介绍": "\n".join(intro_parts),
+        "核心结论摘录": takeaways,
+        "投资观点摘录": overview,
+        "估值摘录": valuation,
+        "关键财务指标摘录": metric_body,
+        "同行比较摘录": peer_body,
+        "沉淀方式": (
+            "飞书：本索引页已创建在指定文档库下面，作为知识库入口。\n"
+            "Obsidian：系统会把索引 Markdown 和 HTML 副本同步到配置的 GitHub 知识库仓库；"
+            "本机 Obsidian 通过 Git 同步后即可检索。"
+        ),
+        "数据覆盖说明": data_coverage,
     }
 
     blocks = [
-        feishu_text_block(f"{req.company_name}（{req.ticker}）股票研究报告", bold=True),
+        feishu_text_block(f"{req.company_name}（{req.ticker}）HTML 股票研究报告索引", bold=True),
         feishu_text_block(
-            "本报告由 FinRobot 自动生成。飞书文档保留完整中文正文、关键财务指标和投研结论；专业 HTML 研报提供图表、表格和分节排版。内容仅供投研参考，不构成投资建议。"
+            "本页用于飞书知识库归档和检索；完整研报以 HTML 链接为准。内容仅供投研参考，不构成投资建议。"
         ),
     ]
     for title, body in sections.items():
-        add_doc_section(blocks, title, body)
+        add_doc_section(blocks, title, body, max_paragraphs=4)
 
     if len(blocks) <= 2:
         add_doc_section(
@@ -944,6 +970,218 @@ def create_feishu_document(title: str, blocks: List[Dict], chat_id: Optional[str
     }
 
 
+def github_repo_parts(repo: str) -> Optional[tuple]:
+    clean = re.sub(r"^https://github\.com/", "", str(repo or "").strip(), flags=re.IGNORECASE)
+    clean = re.sub(r"\.git$", "", clean)
+    parts = [part for part in clean.split("/") if part]
+    if len(parts) < 2:
+        return None
+    return parts[0], parts[1]
+
+
+def github_get_file(client: httpx.Client, owner: str, repo: str, path: str) -> Dict:
+    encoded_path = "/".join(quote(part, safe="") for part in path.split("/") if part)
+    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{encoded_path}"
+    response = client.get(url, params={"ref": OBSIDIAN_GITHUB_BRANCH})
+    if response.status_code == 404:
+        return {"sha": "", "content": ""}
+    response.raise_for_status()
+    data = response.json()
+    raw = base64.b64decode((data.get("content") or "").encode("utf-8")).decode("utf-8")
+    return {"sha": data.get("sha", ""), "content": raw}
+
+
+def github_put_file(client: httpx.Client, owner: str, repo: str, path: str, content: str, message: str) -> Dict:
+    remote = github_get_file(client, owner, repo, path)
+    if remote.get("content") == content:
+        return {"path": path, "changed": False, "sha": remote.get("sha", "")}
+
+    encoded_path = "/".join(quote(part, safe="") for part in path.split("/") if part)
+    body = {
+        "message": message,
+        "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+        "branch": OBSIDIAN_GITHUB_BRANCH,
+    }
+    if remote.get("sha"):
+        body["sha"] = remote["sha"]
+
+    response = client.put(f"https://api.github.com/repos/{owner}/{repo}/contents/{encoded_path}", json=body)
+    response.raise_for_status()
+    data = response.json()
+    return {"path": path, "changed": True, "sha": data.get("content", {}).get("sha", "")}
+
+
+def github_append_unique(client: httpx.Client, owner: str, repo: str, path: str, block: str, message: str) -> Dict:
+    remote = github_get_file(client, owner, repo, path)
+    current = str(remote.get("content") or "").rstrip()
+    clean_block = str(block or "").strip()
+    if not clean_block:
+        return {"path": path, "changed": False, "sha": remote.get("sha", "")}
+    if clean_block in current:
+        return {"path": path, "changed": False, "sha": remote.get("sha", "")}
+    next_content = f"{current}\n\n{clean_block}\n" if current else f"{clean_block}\n"
+    return github_put_file(client, owner, repo, path, next_content, message)
+
+
+def read_report_html_for_sync(html_path: str, req: AnalysisRequest) -> str:
+    if not html_path or not os.path.exists(html_path):
+        return ""
+    try:
+        with open(html_path, "r", encoding="utf-8") as f:
+            html = f.read()
+    except Exception as e:
+        logger.warning(f"Failed to read HTML for Obsidian sync: {e}")
+        return ""
+
+    base = public_url(f"/output/{req.ticker}/report/")
+    return re.sub(
+        r'(<img[^>]+src=["\'])(?!https?://|data:|/)([^"\']+)(["\'])',
+        lambda m: f"{m.group(1)}{base}{m.group(2)}{m.group(3)}",
+        html,
+        flags=re.IGNORECASE,
+    )
+
+
+def build_finrobot_obsidian_markdown(
+    req: AnalysisRequest,
+    html_url: str,
+    feishu_doc_url: str,
+    task_id: str,
+    analysis_output_dir: str,
+) -> str:
+    generated_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%SZ")
+    takeaways = read_text_file(os.path.join(analysis_output_dir, "major_takeaways.txt"))
+    overview = read_text_file(os.path.join(analysis_output_dir, "investment_overview.txt"))
+    valuation = read_text_file(os.path.join(analysis_output_dir, "valuation_overview.txt"))
+    metrics = read_metric_summary(os.path.join(analysis_output_dir, "financial_metrics_and_forecasts.csv"), limit=8)
+    peers = ", ".join(req.peers) if req.peers else "未指定"
+
+    metric_lines = "\n".join(f"- {row}" for row in metrics) if metrics else "- 本次未读取到关键财务指标。"
+    body_sections = [
+        "---",
+        f"source_type: finrobot_equity_report",
+        f"ticker: {req.ticker}",
+        f"company: {req.company_name}",
+        f"peers: {peers}",
+        f"generated_at: {generated_at}",
+        f"html_url: {html_url}",
+        f"feishu_doc_url: {feishu_doc_url}",
+        f"task_id: {task_id}",
+        "tags:",
+        "  - finrobot",
+        "  - equity-research",
+        f"  - ticker/{req.ticker.lower()}",
+        "---",
+        "",
+        f"# {req.company_name}（{req.ticker}）HTML 股票研究报告",
+        "",
+        f"- HTML 研报：{html_url or '未生成'}",
+        f"- 飞书知识库索引：{feishu_doc_url or '未创建'}",
+        f"- 同行公司：{peers}",
+        f"- 任务 ID：{task_id}",
+        "",
+        "## 研报定位",
+        "本笔记是 FinRobot 自动生成的 HTML 研报索引。主阅读入口是 HTML，Obsidian 用于长期检索、主题链接和版本沉淀。",
+        "",
+        "## 核心结论摘录",
+        takeaways or "本次未生成核心结论文本，请打开 HTML 查看结构化数据和图表。",
+        "",
+        "## 投资观点摘录",
+        overview or "本次未生成投资观点文本。",
+        "",
+        "## 估值摘录",
+        valuation or "本次未生成估值文本。",
+        "",
+        "## 关键财务指标",
+        metric_lines,
+        "",
+        "## 后续跟踪",
+        "- 复核最新财报、电话会和公司公告。",
+        "- 对照同行估值、盈利质量和风险催化剂变化。",
+        "- 若 HTML 中有模块显示数据源未返回，优先检查 FMP 权限和对应数据覆盖。",
+    ]
+    return "\n".join(body_sections).strip() + "\n"
+
+
+def sync_finrobot_report_to_obsidian(
+    req: AnalysisRequest,
+    html_url: str,
+    feishu_doc_url: str,
+    task_id: str,
+    report_output_dir: str,
+    analysis_output_dir: str,
+    html_filename: str,
+) -> Dict:
+    if not OBSIDIAN_SYNC_ENABLED:
+        return {"synced": False, "reason": "disabled"}
+    if not OBSIDIAN_GITHUB_TOKEN:
+        return {"synced": False, "reason": "missing_obsidian_github_token"}
+    repo_parts = github_repo_parts(OBSIDIAN_GITHUB_REPO)
+    if not repo_parts:
+        return {"synced": False, "reason": "invalid_obsidian_github_repo"}
+
+    owner, repo = repo_parts
+    timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    ticker_slug = slugify_report_part(req.ticker.lower(), "ticker")
+    company_slug = slugify_report_part(req.company_name.lower(), ticker_slug)
+    folder = f"{OBSIDIAN_FINROBOT_FOLDER}/{ticker_slug}"
+    note_path = f"{folder}/{timestamp}-{company_slug}-{ticker_slug}-equity-report.md"
+    html_sync_path = f"{folder}/{timestamp}-{ticker_slug}-professional-equity-report.html"
+    index_path = f"{OBSIDIAN_FINROBOT_FOLDER}/index.md"
+
+    markdown = build_finrobot_obsidian_markdown(req, html_url, feishu_doc_url, task_id, analysis_output_dir)
+    html_path = os.path.join(report_output_dir, html_filename) if html_filename else ""
+    html_content = read_report_html_for_sync(html_path, req)
+    index_block = (
+        f"- {datetime.utcnow().strftime('%Y-%m-%d')} "
+        f"[[{note_path.replace('.md', '')}|{req.company_name}（{req.ticker}）]] "
+        f"- [HTML]({html_url})"
+        f"{f' - [飞书]({feishu_doc_url})' if feishu_doc_url else ''}"
+    )
+
+    headers = {
+        "Authorization": f"Bearer {OBSIDIAN_GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    with httpx.Client(timeout=OBSIDIAN_GITHUB_TIMEOUT, headers=headers) as client:
+        note_result = github_put_file(
+            client,
+            owner,
+            repo,
+            note_path,
+            markdown,
+            f"Add FinRobot report note for {req.ticker}",
+        )
+        html_result = None
+        if html_content:
+            html_result = github_put_file(
+                client,
+                owner,
+                repo,
+                html_sync_path,
+                html_content,
+                f"Add FinRobot HTML report for {req.ticker}",
+            )
+        index_result = github_append_unique(
+            client,
+            owner,
+            repo,
+            index_path,
+            index_block,
+            f"Index FinRobot report for {req.ticker}",
+        )
+
+    return {
+        "synced": True,
+        "note_path": note_result["path"],
+        "html_path": html_result["path"] if html_result else "",
+        "index_path": index_result["path"],
+        "repo": OBSIDIAN_GITHUB_REPO,
+        "branch": OBSIDIAN_GITHUB_BRANCH,
+    }
+
+
 def start_feishu_task(req: AnalysisRequest, message_id: Optional[str] = None, chat_id: Optional[str] = None) -> str:
     task_id = str(uuid.uuid4())
     tasks[task_id] = {
@@ -991,7 +1229,7 @@ async def feishu_events(payload: Dict, background_tasks: BackgroundTasks):
         await reply_feishu_message(
             message_id,
             "请发送：/report AAPL Apple Inc | MSFT GOOGL\n"
-            "竖线后面是可选的同行股票代码。/report 会生成完整中文研报和专业 HTML；/fastreport 用于快速生成结构化摘要。",
+            "竖线后面是可选的同行股票代码。/report 会生成专业 HTML 研报，并在飞书知识库创建索引页；/fastreport 用于快速生成结构化 HTML。",
         )
         return {"success": True, "ignored": "unsupported command"}
 
@@ -1001,7 +1239,7 @@ async def feishu_events(payload: Dict, background_tasks: BackgroundTasks):
     status_link = public_url(f"/api/feishu/status/{task_id}")
     await reply_feishu_message(
         message_id,
-        f"已开始生成 {req.company_name}（{req.ticker}）完整中文投研文档和专业 HTML 研报。\n"
+        f"已开始生成 {req.company_name}（{req.ticker}）专业 HTML 投研报告，并同步飞书知识库索引。\n"
         f"任务 ID：{task_id}\n状态：{status_link}",
     )
     return {"success": True, "task_id": task_id}
@@ -1183,7 +1421,7 @@ def execute_analysis_pipeline(task_id: str, req: AnalysisRequest):
         "--config-file", config_file,
     ]
 
-    if req.generate_text:
+    if req.enable_report_text_regeneration:
         cmd_report.append("--enable-text-regeneration")
     
     # 新增增强功能选项
@@ -1303,21 +1541,46 @@ def execute_feishu_analysis_pipeline(
     try:
         analysis_output_dir = os.path.join(OUTPUT_DIR, req.ticker, "analysis")
         report_output_dir = os.path.join(OUTPUT_DIR, req.ticker, "report")
-        title = f"{req.company_name}（{req.ticker}）股票研究报告"
+        html_files = task.get("result", {}).get("html") or []
+        html_filename = html_files[0] if html_files else ""
+        html_url = public_url(f"/output/{req.ticker}/report/{html_filename}") if html_filename else ""
+
+        title = f"{req.company_name}（{req.ticker}）HTML 研报索引"
         blocks = build_chinese_report_blocks(req, analysis_output_dir, report_output_dir)
         doc = create_feishu_document(title, blocks, chat_id=chat_id)
 
+        obsidian_sync = sync_finrobot_report_to_obsidian(
+            req=req,
+            html_url=html_url,
+            feishu_doc_url=doc.get("url", ""),
+            task_id=task_id,
+            report_output_dir=report_output_dir,
+            analysis_output_dir=analysis_output_dir,
+            html_filename=html_filename,
+        )
+
         task.setdefault("result", {})
         task["result"]["feishu_doc"] = doc
-        html_files = task["result"].get("html") or []
-        html_url = public_url(f"/output/{req.ticker}/report/{html_files[0]}") if html_files else ""
-        append_task_log(task_id, f"Created Feishu document: {doc['url']}")
-        reply_text = (
-            f"{req.company_name}（{req.ticker}）中文投研报告已生成：\n"
-            f"飞书文档：{doc['url']}\n"
+        task["result"]["obsidian_sync"] = obsidian_sync
+        append_task_log(task_id, f"Created Feishu HTML index document: {doc['url']}")
+        if obsidian_sync.get("synced"):
+            append_task_log(task_id, f"Synced Obsidian note: {obsidian_sync.get('note_path')}")
+            if obsidian_sync.get("html_path"):
+                append_task_log(task_id, f"Synced Obsidian HTML copy: {obsidian_sync.get('html_path')}")
+        else:
+            append_task_log(task_id, f"Obsidian sync skipped: {obsidian_sync.get('reason')}")
+
+        obsidian_line = (
+            f"Obsidian：已同步 {obsidian_sync.get('note_path')}"
+            if obsidian_sync.get("synced")
+            else f"Obsidian：未同步（{obsidian_sync.get('reason', 'unknown')}）"
         )
-        if html_url:
-            reply_text += f"专业 HTML 研报：{html_url}\n"
+        reply_text = (
+            f"{req.company_name}（{req.ticker}）HTML 投研报告已生成：\n"
+            f"专业 HTML 研报：{html_url or '未找到'}\n"
+            f"飞书知识库索引：{doc['url']}\n"
+            f"{obsidian_line}\n"
+        )
         reply_text += f"文档 ID：{doc['document_id']}"
         reply_feishu_message_sync(
             message_id,
