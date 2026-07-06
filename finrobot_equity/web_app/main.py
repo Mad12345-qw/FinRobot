@@ -1413,7 +1413,7 @@ def execute_analysis_pipeline(task_id: str, req: AnalysisRequest):
     if not os.path.exists(analysis_csv_path) or os.path.getsize(analysis_csv_path) == 0:
         error_message = (
             "Financial analysis did not produce financial_metrics_and_forecasts.csv. "
-            "Check FMP API access and upstream data logs."
+            "Check FMP/Finnhub/yfinance access and upstream data logs."
         )
         append_task_log(task_id, f"Error: {error_message}")
         tasks[task_id]["status"] = "failed"

@@ -168,6 +168,154 @@ def get_finnhub_financial_data(ticker: str, api_key: str, period: str = "annual"
     }
 
 
+def _yf_statement_row(statement: pd.DataFrame, labels: list[str]):
+    if statement is None or statement.empty:
+        return None
+    normalized_labels = ["".join(label.lower().split()) for label in labels]
+    for idx in statement.index:
+        normalized_idx = "".join(str(idx).lower().split())
+        if normalized_idx in normalized_labels or any(label in normalized_idx for label in normalized_labels):
+            return statement.loc[idx]
+    return None
+
+
+def _yf_value(row, column):
+    if row is None:
+        return None
+    try:
+        value = row.get(column)
+    except Exception:
+        return None
+    if value is None or pd.isna(value):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return value
+
+
+def get_yfinance_financial_data(ticker: str, period: str = "annual", limit: int = 5, finnhub_api_key: str | None = None) -> dict | None:
+    """Build minimal FinRobot-compatible financial tables from yfinance."""
+    try:
+        yf_ticker = yf.Ticker(ticker)
+        income_raw = yf_ticker.financials if period == "annual" else yf_ticker.quarterly_financials
+        balance_raw = yf_ticker.balance_sheet if period == "annual" else yf_ticker.quarterly_balance_sheet
+        cash_raw = yf_ticker.cashflow if period == "annual" else yf_ticker.quarterly_cashflow
+    except Exception as e:
+        print(f"Error fetching yfinance financial statements for {ticker}: {e}")
+        return None
+
+    if income_raw is None or income_raw.empty:
+        print(f"No yfinance income statement data for {ticker}.")
+        return None
+
+    columns = list(income_raw.columns)[:limit]
+    revenue_row = _yf_statement_row(income_raw, ["Total Revenue", "Operating Revenue", "Revenue"])
+    cost_row = _yf_statement_row(income_raw, ["Cost Of Revenue", "Cost Of Goods Sold", "Cost Of Sales"])
+    gross_row = _yf_statement_row(income_raw, ["Gross Profit"])
+    sga_row = _yf_statement_row(income_raw, [
+        "Selling General And Administration",
+        "Selling General Administrative",
+        "General And Administrative Expense",
+        "Selling And Marketing Expense",
+    ])
+    ebitda_row = _yf_statement_row(income_raw, ["EBITDA", "Normalized EBITDA"])
+    operating_income_row = _yf_statement_row(income_raw, ["Operating Income", "Operating Income Loss"])
+    eps_row = _yf_statement_row(income_raw, ["Diluted EPS", "Basic EPS"])
+    depreciation_row = _yf_statement_row(cash_raw, [
+        "Depreciation And Amortization",
+        "Depreciation Amortization Depletion",
+        "Reconciled Depreciation",
+    ])
+
+    rows_income = []
+    rows_balance = []
+    rows_cash = []
+    for column in columns:
+        date = pd.to_datetime(column)
+        year = int(date.year)
+        revenue = _yf_value(revenue_row, column)
+        cost_of_revenue = _yf_value(cost_row, column)
+        gross_profit = _yf_value(gross_row, column)
+        sga = _yf_value(sga_row, column)
+        ebitda = _yf_value(ebitda_row, column)
+        operating_income = _yf_value(operating_income_row, column)
+        depreciation = _yf_value(depreciation_row, column)
+        if ebitda is None and operating_income is not None:
+            ebitda = operating_income + (depreciation or 0)
+        eps = _yf_value(eps_row, column)
+
+        rows_income.append({
+            "date": date.strftime("%Y-%m-%d"),
+            "year": year,
+            "revenue": revenue,
+            "costOfRevenue": cost_of_revenue,
+            "grossProfit": gross_profit,
+            "sellingGeneralAndAdministrativeExpenses": sga,
+            "operatingIncome": operating_income,
+            "ebitda": ebitda,
+            "eps": eps,
+        })
+        rows_balance.append({"date": date.strftime("%Y-%m-%d"), "year": year})
+        rows_cash.append({
+            "date": date.strftime("%Y-%m-%d"),
+            "year": year,
+            "depreciationAndAmortization": depreciation,
+        })
+
+    metric = {}
+    if finnhub_api_key:
+        metric_data = _get_finnhub_json(
+            f"https://finnhub.io/api/v1/stock/metric?symbol={ticker}&metric=all&token={finnhub_api_key}",
+            f"metrics for {ticker}"
+        ) or {}
+        metric = metric_data.get("metric") or {}
+
+    key_metrics_rows = []
+    ratios_rows = []
+    if rows_income:
+        latest_year = rows_income[0].get("year")
+        latest_date = rows_income[0].get("date")
+        pe_ratio = metric.get("peAnnual") or metric.get("peTTM") or metric.get("forwardPE")
+        ev_ebitda = metric.get("evEbitdaTTM")
+        pb_ratio = metric.get("pbAnnual") or metric.get("pbQuarterly")
+        roe = metric.get("roeTTM") or metric.get("roeRfy")
+        key_metrics_rows.append({
+            "date": latest_date,
+            "year": latest_year,
+            "peRatio": pe_ratio,
+            "evToEBITDA": ev_ebitda,
+            "enterpriseValueOverEBITDA": ev_ebitda,
+            "pbRatio": pb_ratio,
+        })
+        ratios_rows.append({
+            "date": latest_date,
+            "year": latest_year,
+            "priceEarningsRatio": pe_ratio,
+            "peRatio": pe_ratio,
+            "priceToBookRatio": pb_ratio,
+            "returnOnEquity": (float(roe) / 100) if roe is not None and abs(float(roe)) > 1 else roe,
+        })
+
+    income_df = pd.DataFrame(rows_income)
+    if not income_df.empty:
+        income_df["date"] = pd.to_datetime(income_df["date"])
+    balance_df = pd.DataFrame(rows_balance)
+    if not balance_df.empty:
+        balance_df["date"] = pd.to_datetime(balance_df["date"])
+    cash_df = pd.DataFrame(rows_cash)
+    if not cash_df.empty:
+        cash_df["date"] = pd.to_datetime(cash_df["date"])
+
+    return {
+        "income_statement": income_df,
+        "balance_sheet": balance_df,
+        "cash_flow": cash_df,
+        "ratios": pd.DataFrame(ratios_rows),
+        "key_metrics": pd.DataFrame(key_metrics_rows),
+    }
+
+
 def fetch_yfinance_volume(ticker: str, start_date: str, end_date: str) -> pd.DataFrame | None:
     """Fetches historical trading volume data using yfinance."""
     try:
@@ -325,6 +473,16 @@ def get_comprehensive_financial_data(ticker: str, api_key: str, period: str = "a
         finnhub_data = get_finnhub_financial_data(ticker, finnhub_api_key, period=period, limit=limit)
         if finnhub_data and finnhub_data.get("income_statement") is not None and not finnhub_data["income_statement"].empty:
             return finnhub_data
+
+        print(f"Finnhub reported financials unavailable for {ticker}; falling back to yfinance financials.")
+        yfinance_data = get_yfinance_financial_data(
+            ticker,
+            period=period,
+            limit=limit,
+            finnhub_api_key=finnhub_api_key
+        )
+        if yfinance_data and yfinance_data.get("income_statement") is not None and not yfinance_data["income_statement"].empty:
+            return yfinance_data
     
     return financial_data
 
@@ -339,6 +497,11 @@ def combine_peer_financial_data(tickers: list[str], api_key: str, years_limit: i
             if finnhub_data:
                 income_df = finnhub_data.get("income_statement")
                 key_metrics_df = finnhub_data.get("key_metrics")
+        if (income_df is None or income_df.empty) and finnhub_api_key:
+            yfinance_data = get_yfinance_financial_data(ticker, limit=years_limit, finnhub_api_key=finnhub_api_key)
+            if yfinance_data:
+                income_df = yfinance_data.get("income_statement")
+                key_metrics_df = yfinance_data.get("key_metrics")
         
         ticker_data = {}
         if income_df is not None and not income_df.empty:

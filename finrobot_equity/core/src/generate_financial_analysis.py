@@ -113,10 +113,10 @@ def main():
         print("openai_base_url = https://api.xxx.com/v1  # optional, for proxy services")
         return
 
-    print(f"Starting FMP API-based financial analysis for {args.company_name} ({args.company_ticker})")
+    print(f"Starting financial analysis for {args.company_name} ({args.company_ticker})")
 
-    # 1. Fetch Financial Data from FMP API
-    print(f"Fetching financial data from FMP API...")
+    # 1. Fetch Financial Data from configured providers
+    print(f"Fetching financial data from FMP/Finnhub/yfinance...")
     financial_data = get_comprehensive_financial_data(
         ticker=args.company_ticker, 
         api_key=fmp_api_key, 
@@ -127,14 +127,14 @@ def main():
 
     # Check if we got the required data
     if financial_data.get('income_statement') is None or financial_data['income_statement'].empty:
-        print("Error: Could not fetch income statement data from FMP API. Exiting.")
+        print("Error: Could not fetch income statement data from FMP, Finnhub, or yfinance. Exiting.")
         print("Please check:")
-        print("1. FMP API key is valid and has remaining quota")
-        print("2. Ticker symbol is correct") 
+        print("1. FMP/Finnhub API keys are valid and have remaining quota")
+        print("2. Ticker symbol is correct")
         print("3. Internet connection is working")
         return
 
-    print("Successfully fetched financial data from FMP API")
+    print("Successfully fetched financial data")
     income_df = financial_data['income_statement']
     print(f"Retrieved {len(income_df)} years of income statement data")
     
