@@ -1118,13 +1118,16 @@ def render_professional_html_report(data: dict) -> str:
     </div>
     """
     peer_valuation_section_html = peer_valuation_body
+    peer_ebitda_fallback_html = '<p class="body-text" style="color:#64748b;">Peer EBITDA table data was not returned for this run.</p>'
+    peer_ev_fallback_html = '<p class="body-text" style="color:#64748b;">Peer EV/EBITDA table data was not returned for this run.</p>'
+    financial_summary_fallback_html = '<p class="body-text" style="color:#64748b;">Financial summary table data was not returned for this run.</p>'
     peer_ebitda_section_html = (
         f'<div class="content-card mb-6"><h3 class="heading-2" style="margin-top:0;">Peer EBITDA Comparison</h3>'
-        f'{peer_ebitda_table_html if _has_real_content(peer_ebitda_table_html) else "<p class=\"body-text\" style=\"color:#64748b;\">Peer EBITDA table data was not returned for this run.</p>"}</div>'
+        f'{peer_ebitda_table_html if _has_real_content(peer_ebitda_table_html) else peer_ebitda_fallback_html}</div>'
     )
     peer_ev_comp_section_html = (
         f'<div class="content-card mb-6"><h3 class="heading-2" style="margin-top:0;">Peer EV/EBITDA Comparison</h3>'
-        f'{peer_ev_table_html if _has_real_content(peer_ev_table_html) else "<p class=\"body-text\" style=\"color:#64748b;\">Peer EV/EBITDA table data was not returned for this run.</p>"}</div>'
+        f'{peer_ev_table_html if _has_real_content(peer_ev_table_html) else peer_ev_fallback_html}</div>'
     )
     risks_section_html = (
         f'<h3 class="heading-2">Risk Factors</h3><div class="content-card" style="border-left: 4px solid #ef4444;">{risks_html}</div>'
@@ -1136,7 +1139,7 @@ def render_professional_html_report(data: dict) -> str:
         f'<h3 class="heading-2">Credit & Cash Flow Metrics</h3>{credit_cashflow_table_html}'
         if _has_real_content(credit_cashflow_table_html) else ""
     )
-    financial_data_body = f'<h3 class="heading-2">Income Statement Summary</h3>{financial_summary_table_html if _has_real_content(financial_summary_table_html) else "<p class=\"body-text\" style=\"color:#64748b;\">Financial summary table data was not returned for this run.</p>"}'
+    financial_data_body = f'<h3 class="heading-2">Income Statement Summary</h3>{financial_summary_table_html if _has_real_content(financial_summary_table_html) else financial_summary_fallback_html}'
     financial_data_body += credit_cashflow_section_html
     financial_data_section_html = _section_html(
         "financial-data",
