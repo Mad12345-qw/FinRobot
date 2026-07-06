@@ -32,6 +32,142 @@ def _first_valid_metric(row, names: list[str]):
     return None
 
 
+def _get_finnhub_json(url: str, label: str):
+    try:
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching Finnhub {label}: {e}")
+        return None
+
+
+def _xbrl_value(section: list[dict], concepts: list[str], labels: list[str] = None):
+    labels = labels or []
+    for item in section or []:
+        concept = str(item.get("concept") or "").lower()
+        label = str(item.get("label") or "").lower()
+        if any(token.lower() in concept for token in concepts):
+            return item.get("value")
+        if any(token.lower() in label for token in labels):
+            return item.get("value")
+    return None
+
+
+def get_finnhub_financial_data(ticker: str, api_key: str, period: str = "annual", limit: int = 5) -> dict | None:
+    """Build minimal FinRobot-compatible financial tables from Finnhub reported financials."""
+    if not api_key:
+        return None
+
+    freq = "annual" if period == "annual" else "quarterly"
+    reported = _get_finnhub_json(
+        f"https://finnhub.io/api/v1/stock/financials-reported?symbol={ticker}&freq={freq}&token={api_key}",
+        f"reported financials for {ticker}"
+    )
+    if not reported or not reported.get("data"):
+        return None
+
+    rows_income = []
+    rows_balance = []
+    rows_cash = []
+    for filing in reported.get("data", [])[:limit]:
+        report = filing.get("report") or {}
+        ic = report.get("ic") or []
+        bs = report.get("bs") or []
+        cf = report.get("cf") or []
+        year = filing.get("year")
+        date = (filing.get("endDate") or filing.get("filedDate") or "")[:10]
+
+        revenue = _xbrl_value(
+            ic,
+            ["revenuefromcontractwithcustomer", "revenues", "salesrevenue"],
+            ["revenue", "sales"]
+        )
+        cost_of_revenue = _xbrl_value(
+            ic,
+            ["costofrevenue", "costofgoods", "costofsales"],
+            ["cost of revenue", "cost of sales"]
+        )
+        gross_profit = _xbrl_value(ic, ["grossprofit"], ["gross profit"])
+        sga = _xbrl_value(
+            ic,
+            ["sellinggeneralandadministrative", "sellinggeneraladministrative"],
+            ["selling, general", "general and administrative"]
+        )
+        operating_income = _xbrl_value(ic, ["operatingincomeloss"], ["operating income"])
+        depreciation = _xbrl_value(
+            cf,
+            ["depreciationdepletionandamortization", "depreciationamortization"],
+            ["depreciation", "amortization"]
+        )
+        ebitda = None
+        if operating_income is not None:
+            ebitda = operating_income + (depreciation or 0)
+        eps = _xbrl_value(ic, ["earningspersharediluted"], ["diluted earnings per share", "diluted eps"])
+
+        rows_income.append({
+            "date": date,
+            "year": year,
+            "revenue": revenue,
+            "costOfRevenue": cost_of_revenue,
+            "grossProfit": gross_profit,
+            "sellingGeneralAndAdministrativeExpenses": sga,
+            "operatingIncome": operating_income,
+            "ebitda": ebitda,
+            "eps": eps,
+        })
+        rows_balance.append({"date": date, "year": year})
+        rows_cash.append({
+            "date": date,
+            "year": year,
+            "depreciationAndAmortization": depreciation,
+        })
+
+    metric_data = _get_finnhub_json(
+        f"https://finnhub.io/api/v1/stock/metric?symbol={ticker}&metric=all&token={api_key}",
+        f"metrics for {ticker}"
+    ) or {}
+    metric = metric_data.get("metric") or {}
+    key_metrics_rows = []
+    ratios_rows = []
+    if rows_income:
+        latest_year = rows_income[0].get("year")
+        latest_date = rows_income[0].get("date")
+        pe_ratio = metric.get("peAnnual") or metric.get("peTTM")
+        ev_ebitda = metric.get("evEbitdaTTM")
+        key_metrics_rows.append({
+            "date": latest_date,
+            "year": latest_year,
+            "peRatio": pe_ratio,
+            "evToEBITDA": ev_ebitda,
+            "enterpriseValueOverEBITDA": ev_ebitda,
+        })
+        ratios_rows.append({
+            "date": latest_date,
+            "year": latest_year,
+            "priceEarningsRatio": pe_ratio,
+            "peRatio": pe_ratio,
+        })
+
+    income_df = pd.DataFrame(rows_income)
+    if not income_df.empty:
+        income_df["date"] = pd.to_datetime(income_df["date"])
+    balance_df = pd.DataFrame(rows_balance)
+    if not balance_df.empty:
+        balance_df["date"] = pd.to_datetime(balance_df["date"])
+    cash_df = pd.DataFrame(rows_cash)
+    if not cash_df.empty:
+        cash_df["date"] = pd.to_datetime(cash_df["date"])
+
+    return {
+        "income_statement": income_df,
+        "balance_sheet": balance_df,
+        "cash_flow": cash_df,
+        "ratios": pd.DataFrame(ratios_rows),
+        "key_metrics": pd.DataFrame(key_metrics_rows),
+    }
+
+
 def fetch_yfinance_volume(ticker: str, start_date: str, end_date: str) -> pd.DataFrame | None:
     """Fetches historical trading volume data using yfinance."""
     try:
@@ -167,7 +303,7 @@ def get_fmp_cash_flow_statement(ticker: str, api_key: str, period: str = "annual
         print(f"Error processing FMP cash flow data for {ticker}: {e}")
         return None
 
-def get_comprehensive_financial_data(ticker: str, api_key: str, period: str = "annual", limit: int = 5) -> dict:
+def get_comprehensive_financial_data(ticker: str, api_key: str, period: str = "annual", limit: int = 5, finnhub_api_key: str | None = None) -> dict:
     """Fetches all three financial statements for a company."""
     print(f"Fetching comprehensive financial data for {ticker}...")
     
@@ -183,15 +319,26 @@ def get_comprehensive_financial_data(ticker: str, api_key: str, period: str = "a
     ratios_df, key_metrics_df = get_fmp_ratios_and_key_metrics(ticker, api_key, period, limit)
     financial_data['ratios'] = ratios_df
     financial_data['key_metrics'] = key_metrics_df
+
+    if (financial_data['income_statement'] is None or financial_data['income_statement'].empty) and finnhub_api_key:
+        print(f"FMP financial statements unavailable for {ticker}; falling back to Finnhub reported financials.")
+        finnhub_data = get_finnhub_financial_data(ticker, finnhub_api_key, period=period, limit=limit)
+        if finnhub_data and finnhub_data.get("income_statement") is not None and not finnhub_data["income_statement"].empty:
+            return finnhub_data
     
     return financial_data
 
-def combine_peer_financial_data(tickers: list[str], api_key: str, years_limit: int = 5) -> tuple[pd.DataFrame, pd.DataFrame]:
+def combine_peer_financial_data(tickers: list[str], api_key: str, years_limit: int = 5, finnhub_api_key: str | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Combines EBITDA and EV/EBITDA for a list of peer tickers."""
     all_peers_data = {}
     for ticker in tickers:
         income_df = get_fmp_income_statement(ticker, api_key, limit=years_limit)
         _, key_metrics_df = get_fmp_ratios_and_key_metrics(ticker, api_key, limit=years_limit)
+        if (income_df is None or income_df.empty) and finnhub_api_key:
+            finnhub_data = get_finnhub_financial_data(ticker, finnhub_api_key, limit=years_limit)
+            if finnhub_data:
+                income_df = finnhub_data.get("income_statement")
+                key_metrics_df = finnhub_data.get("key_metrics")
         
         ticker_data = {}
         if income_df is not None and not income_df.empty:

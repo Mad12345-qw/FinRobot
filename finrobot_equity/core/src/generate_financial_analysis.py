@@ -121,7 +121,8 @@ def main():
         ticker=args.company_ticker, 
         api_key=fmp_api_key, 
         period=args.period, 
-        limit=args.years_limit
+        limit=args.years_limit,
+        finnhub_api_key=finnhub_api_key
     )
 
     # Check if we got the required data
@@ -201,7 +202,7 @@ def main():
         
         try:
             df_ebitda_peers, df_ev_ebitda_peers = combine_peer_financial_data(
-                all_tickers, fmp_api_key, years_limit=args.years_limit
+                all_tickers, fmp_api_key, years_limit=args.years_limit, finnhub_api_key=finnhub_api_key
             )
             
             if df_ebitda_peers is not None and not df_ebitda_peers.empty:
