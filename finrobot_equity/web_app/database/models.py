@@ -104,3 +104,19 @@ class ReportRequest(Base):
     
     def __repr__(self):
         return f"<ReportRequest(id={self.id}, ticker='{self.ticker}', status='{self.status}')>"
+
+
+class FeishuEventDedup(Base):
+    """Deduplication record for Feishu message events."""
+    __tablename__ = "feishu_event_dedup"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    event_key = Column(String(255), unique=True, index=True, nullable=False)
+    task_id = Column(String(255), index=True, nullable=False)
+    message_id = Column(String(255), index=True)
+    chat_id = Column(String(255), index=True)
+    text_hash = Column(String(64), index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    def __repr__(self):
+        return f"<FeishuEventDedup(event_key='{self.event_key}', task_id='{self.task_id}')>"

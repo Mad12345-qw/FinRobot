@@ -6,8 +6,9 @@ import secrets
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func, desc
-from .models import User, Session as SessionModel, RequestLog, ReportRequest
+from .models import User, Session as SessionModel, RequestLog, ReportRequest, FeishuEventDedup
 
 
 # =============================================================================
@@ -262,6 +263,41 @@ def delete_report_request(db: Session, task_id: str, user_id: int) -> bool:
         db.commit()
         return True
     return False
+
+
+# =============================================================================
+# Feishu event deduplication
+# =============================================================================
+
+def reserve_feishu_event(
+    db: Session,
+    event_key: str,
+    task_id: str,
+    message_id: Optional[str] = None,
+    chat_id: Optional[str] = None,
+    text_hash: Optional[str] = None,
+) -> tuple[FeishuEventDedup, bool]:
+    """Reserve a Feishu event key. Returns (record, created)."""
+    record = FeishuEventDedup(
+        event_key=event_key,
+        task_id=task_id,
+        message_id=message_id,
+        chat_id=chat_id,
+        text_hash=text_hash,
+    )
+    db.add(record)
+    try:
+        db.commit()
+        db.refresh(record)
+        return record, True
+    except IntegrityError:
+        db.rollback()
+        existing = db.query(FeishuEventDedup).filter(
+            FeishuEventDedup.event_key == event_key
+        ).first()
+        if existing:
+            return existing, False
+        raise
 
 
 # =============================================================================

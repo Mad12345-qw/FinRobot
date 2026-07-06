@@ -1185,19 +1185,57 @@ def sync_finrobot_report_to_obsidian(
     }
 
 
-def start_feishu_task(req: AnalysisRequest, message_id: Optional[str] = None, chat_id: Optional[str] = None) -> str:
+def build_feishu_event_key(payload: Dict, message: Dict, text: str) -> str:
+    """Build a stable idempotency key for a Feishu message event."""
+    header = payload.get("header", {}) if isinstance(payload, dict) else {}
+    event_id = header.get("event_id")
+    message_id = message.get("message_id")
+    chat_id = message.get("chat_id")
+    if message_id:
+        return f"message:{message_id}"
+    if event_id:
+        return f"event:{event_id}"
+    text_hash = hashlib.sha256((text or "").strip().encode("utf-8")).hexdigest()
+    return f"fallback:{chat_id or 'unknown'}:{text_hash}"
+
+
+def reserve_feishu_task(payload: Dict, message: Dict, text: str, req: AnalysisRequest) -> tuple[str, bool]:
+    """Reserve a task id for a Feishu event. Duplicate events reuse the first task."""
+    event_key = build_feishu_event_key(payload, message, text)
     task_id = str(uuid.uuid4())
+    text_hash = hashlib.sha256((text or "").strip().encode("utf-8")).hexdigest()
+    db = SessionLocal()
+    try:
+        record, created = crud.reserve_feishu_event(
+            db=db,
+            event_key=event_key,
+            task_id=task_id,
+            message_id=message.get("message_id"),
+            chat_id=message.get("chat_id"),
+            text_hash=text_hash,
+        )
+    finally:
+        db.close()
+
+    if not created:
+        logger.info(
+            "Duplicate Feishu event ignored: event_key=%s existing_task_id=%s",
+            event_key,
+            record.task_id,
+        )
+        return record.task_id, False
+
     tasks[task_id] = {
         "status": "pending",
         "logs": [],
         "result": None,
         "user": "feishu",
-        "feishu_message_id": message_id,
-        "feishu_chat_id": chat_id,
+        "feishu_message_id": message.get("message_id"),
+        "feishu_chat_id": message.get("chat_id"),
     }
     write_log_to_file(task_id, "Task created by Feishu bot")
     write_log_to_file(task_id, f"Ticker: {req.ticker}, Company: {req.company_name}")
-    return task_id
+    return task_id, True
 
 
 @app.get("/api/health")
@@ -1237,7 +1275,10 @@ async def feishu_events(payload: Dict, background_tasks: BackgroundTasks):
         return {"success": True, "ignored": "unsupported command"}
 
     chat_id = message.get("chat_id")
-    task_id = start_feishu_task(req, message_id=message_id, chat_id=chat_id)
+    task_id, created = reserve_feishu_task(payload, message, text, req)
+    if not created:
+        return {"success": True, "duplicate": True, "task_id": task_id}
+
     background_tasks.add_task(execute_feishu_analysis_pipeline, task_id, req, message_id, chat_id)
     status_link = public_url(f"/api/feishu/status/{task_id}")
     await reply_feishu_message(
