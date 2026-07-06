@@ -130,6 +130,7 @@ def redact_sensitive_text(message: str) -> str:
     patterns = [
         (r"(?i)(apikey=)[^&\s]+", r"\1[REDACTED]"),
         (r"(?i)(api_key=)[^&\s]+", r"\1[REDACTED]"),
+        (r"(?i)(token=)[^&\s]+", r"\1[REDACTED]"),
         (r"(?i)(authorization:\s*bearer\s+)[A-Za-z0-9._\-]+", r"\1[REDACTED]"),
         (r"\b(sk-[A-Za-z0-9_\-]{12,})\b", "[REDACTED]"),
         (r"\b(rnd_[A-Za-z0-9_\-]{12,})\b", "[REDACTED]"),
