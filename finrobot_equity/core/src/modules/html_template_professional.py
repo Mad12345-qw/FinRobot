@@ -176,6 +176,36 @@ def _fallback_investment_thesis(data: dict) -> str:
     return thesis
 
 
+def _fallback_company_overview(data: dict) -> str:
+    company = data.get("company_name_full", "The company")
+    ticker = data.get("company_ticker", "")
+    sector = data.get("sector", "")
+    sector_text = f" in the {sector} sector" if _has_real_content(sector) else ""
+    return (
+        f"{company} ({ticker}) is analyzed{sector_text} using financial statements, market data, "
+        "valuation metrics and peer comparison data. The sections below emphasize measurable operating "
+        "trends and valuation inputs rather than unsupported narrative."
+    )
+
+
+def _fallback_valuation_overview(data: dict) -> str:
+    company = data.get("company_name_full", "The company")
+    fwd_pe = data.get("fwd_pe", "N/A")
+    pb_ratio = data.get("pb_ratio", "N/A")
+    market_cap = data.get("market_cap", "N/A")
+    parts = [f"{company}'s valuation should be read alongside growth, margin and peer comparison data."]
+    metrics = []
+    if _has_real_content(fwd_pe):
+        metrics.append(f"forward P/E {fwd_pe}")
+    if _has_real_content(pb_ratio):
+        metrics.append(f"P/B {pb_ratio}")
+    if _has_real_content(market_cap):
+        metrics.append(f"market cap {market_cap}")
+    if metrics:
+        parts.append("Current valuation snapshot: " + ", ".join(metrics) + ".")
+    return " ".join(parts)
+
+
 HTML_PROFESSIONAL_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -416,14 +446,7 @@ HTML_PROFESSIONAL_TEMPLATE = """
 
         {investment_thesis_section_html}
 
-        <!-- Company Overview -->
-        <section class="mb-10" id="company-overview">
-            <h2 class="section-title">Company Overview</h2>
-            <div class="body-text">{company_overview}</div>
-
-            <h3 class="heading-2">Investment Overview</h3>
-            <div class="body-text">{investment_overview}</div>
-        </section>
+        {company_overview_section_html}
 
         <!-- Financial Analysis -->
         <section class="mb-10 page-break" id="financial-analysis">
@@ -462,13 +485,7 @@ HTML_PROFESSIONAL_TEMPLATE = """
             <!-- Target Price Derivation -->
             {valuation_breakdown_html}
 
-            <h3 class="heading-2">Peer Comparison</h3>
-            <div class="two-column">
-                <div>
-                    {peer_ev_ebitda_table_html}
-                </div>
-                {ev_ebitda_chart_html}
-            </div>
+            {peer_valuation_section_html}
         </section>
 
         {news_section_html}
@@ -491,39 +508,18 @@ HTML_PROFESSIONAL_TEMPLATE = """
             <h2 class="section-title">Competitive Landscape</h2>
 
             <!-- Peer Comparison Tables -->
-            <div class="content-card mb-6">
-                <h3 class="heading-2" style="margin-top:0;">Peer EBITDA Comparison</h3>
-                {peer_ebitda_table_html}
-            </div>
-            <div class="content-card mb-6">
-                <h3 class="heading-2" style="margin-top:0;">Peer EV/EBITDA Comparison</h3>
-                {peer_ev_ebitda_table_html_comp}
-            </div>
+            {peer_ebitda_section_html}
+            {peer_ev_comp_section_html}
 
             <h3 class="heading-2">Analysis</h3>
             <div class="body-text">{competitor_analysis}</div>
 
-            <h3 class="heading-2">Risk Factors</h3>
-            <div class="content-card" style="border-left: 4px solid #ef4444;">
-                {risks_html}
-            </div>
+            {risks_section_html}
 
-            <h3 class="heading-2">Key Takeaways</h3>
-            <div class="content-card" style="border-left: 4px solid #10b981;">
-                {major_takeaways_html}
-            </div>
+            {major_takeaways_section_html}
         </section>
 
-        <!-- Financial Data Appendix -->
-        <section class="mb-10 page-break" id="financial-data">
-            <h2 class="section-title">Financial Data</h2>
-
-            <h3 class="heading-2">Income Statement Summary</h3>
-            {financial_summary_table_html}
-
-            <h3 class="heading-2">Credit & Cash Flow Metrics</h3>
-            {credit_cashflow_table_html}
-        </section>
+        {financial_data_section_html}
 
         <!-- Disclaimer -->
         <section class="mt-12" id="disclaimer" style="background: #f8fafc; margin-left: -1.5rem; margin-right: -1.5rem; padding: 1.5rem; border-radius: 0.75rem;">
@@ -1051,21 +1047,31 @@ def render_professional_html_report(data: dict) -> str:
 
     raw_tagline = data.get('tagline') or _fallback_investment_thesis(data)
     raw_news_summary = data.get('news_summary', '')
-    company_overview_html = _markdown_to_html(data.get('company_overview', ''))
+    company_overview_html = _markdown_to_html(data.get('company_overview') or _fallback_company_overview(data))
     investment_overview_html = _markdown_to_html(data.get('investment_overview', ''))
-    valuation_overview_html = _markdown_to_html(data.get('valuation_overview', ''))
+    valuation_overview_html = _markdown_to_html(data.get('valuation_overview') or _fallback_valuation_overview(data))
     competitor_analysis_html = _markdown_to_html(data.get('competitor_analysis', ''))
     news_summary_html = _markdown_to_html(raw_news_summary)
     retail_sentiment_html = format_retail_sentiment_html_professional(data.get('retail_sentiment', {}))
     enhanced_news_html = format_enhanced_news_html_professional(data.get('enhanced_news', {}))
     catalyst_analysis_html = format_catalyst_analysis_html_professional(data.get('catalyst_analysis', {}))
     advanced_charts_section_html = format_advanced_charts_html_professional(data)
+    peer_ev_table_html = data.get('peer_ev_ebitda_table_html', '')
+    peer_ebitda_table_html = data.get('peer_ebitda_table_html', '')
+    credit_cashflow_table_html = data.get('credit_cashflow_table_html', '')
+    financial_summary_table_html = data.get('financial_summary_table_html', '')
+    risks_html = format_risks_to_html(data.get('risks', ''))
+    major_takeaways_html = format_takeaways_to_html(data.get('major_takeaways', ''))
 
     investment_thesis_section_html = _section_html(
         "investment-thesis",
         "Investment Thesis",
         f'<div class="highlight-box"><p class="body-text">{raw_tagline}</p></div>',
     )
+    company_body = f'<div class="body-text">{company_overview_html}</div>'
+    if _has_real_content(investment_overview_html):
+        company_body += f'<h3 class="heading-2">Investment Overview</h3><div class="body-text">{investment_overview_html}</div>'
+    company_overview_section_html = _section_html("company-overview", "Company Overview", company_body)
     news_body_parts = []
     if _has_real_content(news_summary_html):
         news_body_parts.append(f'<h3 class="heading-3" style="margin-top:0;">News Summary</h3><div class="body-text">{news_summary_html}</div>')
@@ -1089,6 +1095,46 @@ def render_professional_html_report(data: dict) -> str:
         advanced_charts_section_html,
         classes="mb-10 page-break",
     )
+    peer_valuation_body = ""
+    if _has_real_content(peer_ev_table_html) or _has_real_content(data.get('ev_ebitda_chart_path', '')):
+        peer_valuation_body = f"""
+        <h3 class="heading-2">Peer Comparison</h3>
+        <div class="two-column">
+            <div>{peer_ev_table_html}</div>
+            {_chart_card('EV/EBITDA Peer Comparison', data.get('ev_ebitda_chart_path', ''), 'EV/EBITDA Peer Comparison')}
+        </div>
+        """
+    peer_valuation_section_html = peer_valuation_body
+    peer_ebitda_section_html = (
+        f'<div class="content-card mb-6"><h3 class="heading-2" style="margin-top:0;">Peer EBITDA Comparison</h3>{peer_ebitda_table_html}</div>'
+        if _has_real_content(peer_ebitda_table_html) else ""
+    )
+    peer_ev_comp_section_html = (
+        f'<div class="content-card mb-6"><h3 class="heading-2" style="margin-top:0;">Peer EV/EBITDA Comparison</h3>{peer_ev_table_html}</div>'
+        if _has_real_content(peer_ev_table_html) else ""
+    )
+    risks_section_html = (
+        f'<h3 class="heading-2">Risk Factors</h3><div class="content-card" style="border-left: 4px solid #ef4444;">{risks_html}</div>'
+        if _has_real_content(risks_html) else ""
+    )
+    major_takeaways_section_html = (
+        f'<h3 class="heading-2">Key Takeaways</h3><div class="content-card" style="border-left: 4px solid #10b981;">{major_takeaways_html}</div>'
+        if _has_real_content(major_takeaways_html) else ""
+    )
+    credit_cashflow_section_html = (
+        f'<h3 class="heading-2">Credit & Cash Flow Metrics</h3>{credit_cashflow_table_html}'
+        if _has_real_content(credit_cashflow_table_html) else ""
+    )
+    financial_data_body = ""
+    if _has_real_content(financial_summary_table_html):
+        financial_data_body += f'<h3 class="heading-2">Income Statement Summary</h3>{financial_summary_table_html}'
+    financial_data_body += credit_cashflow_section_html
+    financial_data_section_html = _section_html(
+        "financial-data",
+        "Financial Data",
+        financial_data_body,
+        classes="mb-10 page-break",
+    )
 
     # Prepare data with defaults
     report_data = {
@@ -1108,6 +1154,7 @@ def render_professional_html_report(data: dict) -> str:
         'week_52_range': data.get('52w_range', data.get('week_52_range', 'N/A')),
         'tagline': raw_tagline,
         'investment_thesis_section_html': investment_thesis_section_html,
+        'company_overview_section_html': company_overview_section_html,
         'company_overview': company_overview_html,
         'investment_overview': investment_overview_html,
         'revenue_analysis_text': data.get('revenue_analysis_text', 'Revenue analysis demonstrates the company\'s financial performance over the analysis period.'),
@@ -1120,7 +1167,8 @@ def render_professional_html_report(data: dict) -> str:
         'eps_pe_chart_html': _chart_card('EPS & PE Chart', data.get('eps_pe_chart_path', ''), 'Source: Company Filings'),
         'valuation_overview': valuation_overview_html,
         'valuation_breakdown_html': format_valuation_breakdown_html(data.get('valuation_analysis', {})),
-        'peer_ev_ebitda_table_html': data.get('peer_ev_ebitda_table_html', '<p class="body-text" style="color:#94a3b8; font-style:italic;">Peer comparison data not available.</p>'),
+        'peer_ev_ebitda_table_html': peer_ev_table_html,
+        'peer_valuation_section_html': peer_valuation_section_html,
         'ev_ebitda_chart_path': data.get('ev_ebitda_chart_path', ''),
         'ev_ebitda_chart_html': _chart_card('EV/EBITDA Peer Comparison', data.get('ev_ebitda_chart_path', ''), 'EV/EBITDA Peer Comparison'),
         'news_summary': news_summary_html,
@@ -1132,13 +1180,19 @@ def render_professional_html_report(data: dict) -> str:
         'catalyst_section_html': catalyst_section_html,
         'advanced_charts_section_html': advanced_charts_section_html,
         'advanced_charts_wrapper_html': advanced_charts_wrapper_html,
-        'peer_ebitda_table_html': data.get('peer_ebitda_table_html', '<p class="body-text" style="color:#94a3b8; font-style:italic;">Peer EBITDA data not available.</p>'),
-        'peer_ev_ebitda_table_html_comp': data.get('peer_ev_ebitda_table_html', '<p class="body-text" style="color:#94a3b8; font-style:italic;">Peer EV/EBITDA data not available.</p>'),
+        'peer_ebitda_table_html': peer_ebitda_table_html,
+        'peer_ebitda_section_html': peer_ebitda_section_html,
+        'peer_ev_ebitda_table_html_comp': peer_ev_table_html,
+        'peer_ev_comp_section_html': peer_ev_comp_section_html,
         'competitor_analysis': competitor_analysis_html,
-        'risks_html': format_risks_to_html(data.get('risks', '')),
-        'major_takeaways_html': format_takeaways_to_html(data.get('major_takeaways', '')),
-        'financial_summary_table_html': data.get('financial_summary_table_html', '<p class="body-text" style="color:#94a3b8; font-style:italic;">Financial summary not available.</p>'),
-        'credit_cashflow_table_html': data.get('credit_cashflow_table_html', '<p class="body-text" style="color:#94a3b8; font-style:italic;">Credit & cashflow metrics not available.</p>'),
+        'risks_html': risks_html,
+        'risks_section_html': risks_section_html,
+        'major_takeaways_html': major_takeaways_html,
+        'major_takeaways_section_html': major_takeaways_section_html,
+        'financial_summary_table_html': financial_summary_table_html,
+        'financial_data_section_html': financial_data_section_html,
+        'credit_cashflow_table_html': credit_cashflow_table_html,
+        'credit_cashflow_section_html': credit_cashflow_section_html,
         'disclaimer_text': data.get('disclaimer_text', 'This report is for informational purposes only and does not constitute investment advice.'),
         'data_source_text': data.get('data_source_text', 'Company Filings, FMP API'),
         'research_source': data.get('research_source', 'AI4Finance FinRobot'),
