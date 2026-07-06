@@ -77,6 +77,81 @@ def _chart_result_path(result) -> str:
     return result or ""
 
 
+MISSING_METRIC_LABEL = "未返回"
+
+
+def _parse_numeric_metric(value) -> float | None:
+    """Parse a display metric such as "$582.90" or "25.4x" into a float."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if not text:
+        return None
+    lowered = text.lower()
+    if lowered in {"n/a", "na", "none", "null", "nan", "not available"} or text in {MISSING_METRIC_LABEL, "不适用"}:
+        return None
+    cleaned = (
+        text.replace("$", "")
+        .replace(",", "")
+        .replace("x", "")
+        .replace("X", "")
+        .replace("%", "")
+        .strip()
+    )
+    try:
+        return float(cleaned)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_missing_metric_value(value, zero_is_missing: bool = False) -> bool:
+    parsed = _parse_numeric_metric(value)
+    if parsed is not None:
+        return zero_is_missing and parsed == 0
+    if value is None:
+        return True
+    text = str(value).strip()
+    return (
+        not text
+        or text in {MISSING_METRIC_LABEL, "不适用"}
+        or text.lower() in {"n/a", "na", "none", "null", "nan", "not available"}
+    )
+
+
+def _latest_metric_number(analysis_df: pd.DataFrame, metric_name: str, prefer_estimates: bool = True) -> float | None:
+    """Return the first usable estimate metric, otherwise the latest actual metric."""
+    if analysis_df is None or analysis_df.empty or "metrics" not in analysis_df.columns:
+        return None
+    rows = analysis_df[analysis_df["metrics"] == metric_name]
+    if rows.empty:
+        return None
+
+    estimate_cols = [col for col in analysis_df.columns if isinstance(col, str) and col.endswith("E")]
+    actual_cols = [col for col in analysis_df.columns if isinstance(col, str) and col.endswith("A")]
+    ordered_cols = (estimate_cols + list(reversed(actual_cols))) if prefer_estimates else (list(reversed(actual_cols)) + estimate_cols)
+
+    for col in ordered_cols:
+        value = rows[col].iloc[0] if col in rows.columns else None
+        parsed = _parse_numeric_metric(value)
+        if parsed is not None and parsed != 0:
+            return parsed
+    return None
+
+
+def _derive_forward_pe(analysis_df: pd.DataFrame, share_price) -> str | None:
+    pe_ratio = _latest_metric_number(analysis_df, "PE Ratio", prefer_estimates=True)
+    if pe_ratio and pe_ratio > 0:
+        return f"{pe_ratio:.1f}x"
+
+    price = _parse_numeric_metric(share_price)
+    eps = _latest_metric_number(analysis_df, "EPS", prefer_estimates=True)
+    if price and price > 0 and eps and eps > 0:
+        return f"{price / eps:.1f}x"
+    return None
+
+
 def load_credit_cashflow_metrics_from_csv(file_path: str) -> pd.DataFrame:
     """Load credit and cashflow metrics from a pre-computed CSV file."""
     if not file_path or not os.path.exists(file_path):
@@ -156,10 +231,10 @@ def generate_major_takeaways(analysis_df: pd.DataFrame, company_ticker: str) -> 
         if len(year_cols) < 2:
             # Return default takeaways if not enough data
             return {
-                "revenue_growth_takeaway": f"{company_ticker}'s revenue growth data requires additional analysis.",
-                "gross_margin_takeaway": f"{company_ticker}'s gross profit margin trends require further evaluation.",
-                "sga_margin_takeaway": f"{company_ticker}'s SG&A expense management efficiency needs assessment.",
-                "ebitda_margin_takeaway": f"{company_ticker}'s EBITDA margin stability shows consistent performance."
+                "revenue_growth_takeaway": f"{company_ticker} 的收入增长数据仍需更多历史区间验证。",
+                "gross_margin_takeaway": f"{company_ticker} 的毛利率/贡献利润率趋势仍需结合后续财报继续评估。",
+                "sga_margin_takeaway": f"{company_ticker} 的 SG&A 费用管理效率需要结合收入规模变化观察。",
+                "ebitda_margin_takeaway": f"{company_ticker} 的 EBITDA 利润率稳定性需要结合同行和周期位置判断。"
             }
 
         # Revenue Growth analysis
@@ -167,37 +242,37 @@ def generate_major_takeaways(analysis_df: pd.DataFrame, company_ticker: str) -> 
         if not revenue_growth_rows.empty:
             latest_growth = str(revenue_growth_rows[year_cols[-1]].iloc[0])
             prev_growth = str(revenue_growth_rows[year_cols[-2]].iloc[0]) if len(year_cols) > 1 else "N/A"
-            takeaways["revenue_growth_takeaway"] = f"{company_ticker}'s revenue growth of {latest_growth} in {year_cols[-1]} shows solid momentum compared to {prev_growth} in {year_cols[-2]}."
+            takeaways["revenue_growth_takeaway"] = f"{company_ticker} 在 {year_cols[-1]} 的收入增长为 {latest_growth}，相较 {year_cols[-2]} 的 {prev_growth}，体现了收入动能的变化。"
 
         # Contribution/Gross Margin analysis
         margin_rows = analysis_df[analysis_df['metrics'] == 'Contribution Margin']
         if not margin_rows.empty:
             latest_margin = str(margin_rows[year_cols[-1]].iloc[0])
             prev_margin = str(margin_rows[year_cols[-2]].iloc[0]) if len(year_cols) > 1 else "N/A"
-            takeaways["gross_margin_takeaway"] = f"{company_ticker}'s contribution margin improved to {latest_margin} in {year_cols[-1]} from {prev_margin} in {year_cols[-2]}, indicating operational efficiency gains."
+            takeaways["gross_margin_takeaway"] = f"{company_ticker} 的贡献利润率从 {year_cols[-2]} 的 {prev_margin} 变化至 {year_cols[-1]} 的 {latest_margin}，需要重点判断经营杠杆和成本效率是否持续。"
 
         # SG&A Margin analysis
         sga_rows = analysis_df[analysis_df['metrics'] == 'SG&A Margin']
         if not sga_rows.empty:
             latest_sga = str(sga_rows[year_cols[-1]].iloc[0])
             prev_sga = str(sga_rows[year_cols[-2]].iloc[0]) if len(year_cols) > 1 else "N/A"
-            takeaways["sga_margin_takeaway"] = f"{company_ticker}'s SG&A margin of {latest_sga} in {year_cols[-1]} compared to {prev_sga} in {year_cols[-2]} demonstrates expense management focus."
+            takeaways["sga_margin_takeaway"] = f"{company_ticker} 的 SG&A 费用率在 {year_cols[-1]} 为 {latest_sga}，对比 {year_cols[-2]} 的 {prev_sga}，反映费用投入与规模扩张之间的匹配度。"
 
         # EBITDA Margin analysis
         ebitda_rows = analysis_df[analysis_df['metrics'] == 'EBITDA Margin']
         if not ebitda_rows.empty:
             latest_ebitda = str(ebitda_rows[year_cols[-1]].iloc[0])
             prev_ebitda = str(ebitda_rows[year_cols[-2]].iloc[0]) if len(year_cols) > 1 else "N/A"
-            takeaways["ebitda_margin_takeaway"] = f"{company_ticker}'s EBITDA margin of {latest_ebitda} in {year_cols[-1]} vs {prev_ebitda} in {year_cols[-2]} shows stable profitability."
+            takeaways["ebitda_margin_takeaway"] = f"{company_ticker} 的 EBITDA 利润率在 {year_cols[-1]} 为 {latest_ebitda}，对比 {year_cols[-2]} 的 {prev_ebitda}，可用于判断盈利质量和估值支撑。"
 
     except Exception as e:
         print(f"Warning: Error generating takeaways: {e}")
         # Return default takeaways
         takeaways = {
-            "revenue_growth_takeaway": f"{company_ticker}'s revenue growth shows consistent performance trends.",
-            "gross_margin_takeaway": f"{company_ticker}'s gross profit margins demonstrate operational effectiveness.",
-            "sga_margin_takeaway": f"{company_ticker}'s SG&A expense management shows disciplined cost control.",
-            "ebitda_margin_takeaway": f"{company_ticker}'s EBITDA margin stability reflects strong underlying fundamentals."
+            "revenue_growth_takeaway": f"{company_ticker} 的收入增长需要结合历史增速、管理层指引和行业需求继续验证。",
+            "gross_margin_takeaway": f"{company_ticker} 的利润率表现需要结合产品结构、定价能力和成本变化判断。",
+            "sga_margin_takeaway": f"{company_ticker} 的 SG&A 费用管理需要关注投入效率和收入转化。",
+            "ebitda_margin_takeaway": f"{company_ticker} 的 EBITDA 利润率稳定性是判断盈利质量和估值弹性的核心指标。"
         }
 
     return takeaways
@@ -461,24 +536,28 @@ def main():
         print("⚠️  No FMP API key found, skipping auto-fetch")
 
     # --- Determine final values (command line args override auto-fetched) ---
-    def get_value(arg_value, auto_key, default_value, format_func=None):
+    def get_value(arg_value, auto_key, default_value, format_func=None, zero_is_missing: bool = False):
         """Get the final value, prioritizing: command line arg > auto-fetched > default"""
         if arg_value is not None:
+            if _is_missing_metric_value(arg_value, zero_is_missing=zero_is_missing):
+                return default_value
             return format_func(arg_value) if format_func else arg_value
         elif auto_key in auto_fetched_metrics and auto_fetched_metrics[auto_key] is not None:
             value = auto_fetched_metrics[auto_key]
+            if _is_missing_metric_value(value, zero_is_missing=zero_is_missing):
+                return default_value
             return format_func(value) if format_func else value
         else:
             return default_value
 
     # Apply the logic for each metric
-    share_price = get_value(args.share_price, 'share_price', 0.0, lambda x: f"${x:.2f}")
-    target_price = get_value(args.target_price, 'target_price', 0.0, lambda x: f"${x:.2f}")
+    share_price = get_value(args.share_price, 'share_price', MISSING_METRIC_LABEL, lambda x: f"${x:.2f}", zero_is_missing=True)
+    target_price = get_value(args.target_price, 'target_price', MISSING_METRIC_LABEL, lambda x: f"${x:.2f}", zero_is_missing=True)
     rating = get_value(args.rating, 'rating', "N/A")
-    market_cap = get_value(args.market_cap, 'market_cap', 0.0, lambda x: f"${x:,.2f}B")
-    volume = get_value(args.volume, 'volume', 0.0, lambda x: f"{x:.2f}M")
-    fwd_pe = get_value(args.fwd_pe, 'fwd_pe', 0.0, lambda x: f"{x:.1f}x")
-    pb_ratio = get_value(args.pb_ratio, 'pb_ratio', 0.0, lambda x: f"{x:.2f}x")
+    market_cap = get_value(args.market_cap, 'market_cap', MISSING_METRIC_LABEL, lambda x: f"${x:,.2f}B", zero_is_missing=True)
+    volume = get_value(args.volume, 'volume', MISSING_METRIC_LABEL, lambda x: f"{x:.2f}M", zero_is_missing=True)
+    fwd_pe = get_value(args.fwd_pe, 'fwd_pe', MISSING_METRIC_LABEL, lambda x: f"{x:.1f}x", zero_is_missing=True)
+    pb_ratio = get_value(args.pb_ratio, 'pb_ratio', MISSING_METRIC_LABEL, lambda x: f"{x:.2f}x", zero_is_missing=True)
     dividend_yield = get_value(args.dividend_yield, 'dividend_yield', "N/A", lambda x: f"{x:.2f}%" if isinstance(x, (int, float)) else str(x))
     free_float = get_value(args.free_float, 'free_float', "N/A", lambda x: f"{x:.1f}%" if isinstance(x, (int, float)) else str(x))
     roe = get_value(args.roe, 'roe', "N/A", lambda x: f"{x:.1f}%" if isinstance(x, (int, float)) else str(x))
@@ -499,6 +578,14 @@ def main():
     if analysis_df is None:
         print("Error: Could not load analysis CSV file")
         return
+
+    if _is_missing_metric_value(fwd_pe, zero_is_missing=True):
+        derived_fwd_pe = _derive_forward_pe(analysis_df, share_price)
+        if derived_fwd_pe:
+            fwd_pe = derived_fwd_pe
+            print(f"  Forward P/E: {fwd_pe} (derived from financial model)")
+        else:
+            print("  Forward P/E: 未返回 (no usable FMP or EPS-derived value)")
 
     peer_ebitda_df = load_analysis_csv(args.peer_ebitda_csv) if args.peer_ebitda_csv else pd.DataFrame()
     peer_ev_ebitda_df = load_analysis_csv(args.peer_ev_ebitda_csv) if args.peer_ev_ebitda_csv else pd.DataFrame()
@@ -808,7 +895,7 @@ def main():
             # Prepare financial data for valuation engine
             financial_data_for_valuation = {
                 'analysis': analysis_df,
-                'current_price': float(share_price.replace('$', '').replace(',', '')) if isinstance(share_price, str) else share_price,
+                'current_price': _parse_numeric_metric(share_price) or 0,
                 'shares_outstanding': auto_fetched_metrics.get('shares_outstanding', 1e9)
             }
 
@@ -847,6 +934,9 @@ def main():
             report_data['valuation_analysis'] = valuation_results
             print(f"✅ Valuation analysis completed with {len(valuation_results['methods'])} methods")
             if synthesis.get('target_price') and synthesis['target_price'] > 0:
+                if _is_missing_metric_value(report_data.get('target_price'), zero_is_missing=True):
+                    report_data['target_price'] = f"${synthesis['target_price']:.2f}"
+                    print("  Target Price: filled from synthesized valuation")
                 print(f"  Synthesized target: ${synthesis['target_price']:.2f} "
                       f"(range ${synthesis['range'][0]:.2f}-${synthesis['range'][1]:.2f}, "
                       f"upside {synthesis['upside']:.1f}%)")
@@ -966,7 +1056,7 @@ def main():
         report_data["credit_cashflow_table_html"] = format_dataframe_to_html_table(credit_cashflow_formatted, table_id="credit-cashflow")
         print("✅ Successfully loaded and formatted Credit & Cashflow metrics from CSV")
     else:
-        report_data["credit_cashflow_table_html"] = "<p>Credit & Cashflow metrics not available.</p>"
+        report_data["credit_cashflow_table_html"] = "<p>本次未返回信用与现金流指标。</p>"
         print("❌ Failed to load Credit & Cashflow metrics from CSV")
 
 
@@ -985,10 +1075,10 @@ def main():
             report_data["peer_ebitda_table_html"] = format_dataframe_to_html_table(peer_ebitda_df.T, table_id="peer-ebitda-summary")
             print("✅ Successfully formatted peer EBITDA table")
         else:
-            report_data["peer_ebitda_table_html"] = "<p>Peer EBITDA data not available.</p>"
+            report_data["peer_ebitda_table_html"] = "<p>本次未返回同行 EBITDA 数据。</p>"
             print("❌ Peer EBITDA DataFrame is empty")
     else:
-        report_data["peer_ebitda_table_html"] = "<p>Peer EBITDA data not available.</p>"
+        report_data["peer_ebitda_table_html"] = "<p>本次未返回同行 EBITDA 数据。</p>"
         print("❌ No peer EBITDA data provided")
 
     if peer_ev_ebitda_df is not None and not peer_ev_ebitda_df.empty:
@@ -1009,18 +1099,18 @@ def main():
             report_data["peer_ev_ebitda_table_html"] = format_dataframe_to_html_table(peer_ev_ebitda_display.T, table_id="peer-ev-ebitda-summary")
             print("✅ Successfully formatted peer EV/EBITDA table")
         else:
-            report_data["peer_ev_ebitda_table_html"] = "<p>Peer EV/EBITDA data not available.</p>"
+            report_data["peer_ev_ebitda_table_html"] = "<p>本次未返回同行 EV/EBITDA 数据。</p>"
             print("❌ Peer EV/EBITDA DataFrame is empty")
     else:
-        report_data["peer_ev_ebitda_table_html"] = "<p>Peer EV/EBITDA data not available.</p>"
+        report_data["peer_ev_ebitda_table_html"] = "<p>本次未返回同行 EV/EBITDA 数据。</p>"
         print("❌ No peer EV/EBITDA data provided")
 
     # --- Generate Professional HTML Report (matching PDF structure) ---
     print("Generating professional HTML report (matching PDF structure)...")
     
     # Add additional data needed for professional template
-    report_data['revenue_analysis_text'] = f"{report_data.get('company_name_full', 'The company')} has demonstrated consistent revenue performance over the analysis period. Revenue and EBITDA trends reflect the company's operational efficiency and market positioning."
-    report_data['eps_analysis_text'] = f"{report_data.get('company_name_full', 'The company')}'s earnings trajectory reflects the company's profitability trends, while valuation multiples indicate market expectations for future growth."
+    report_data['revenue_analysis_text'] = f"{report_data.get('company_name_full', '该公司')} 的收入与 EBITDA 趋势用于衡量增长质量、经营效率和市场竞争位置。需要结合历史增速、利润率变化以及未来预测共同判断。"
+    report_data['eps_analysis_text'] = f"{report_data.get('company_name_full', '该公司')} 的 EPS 轨迹反映盈利能力变化，P/E 等估值倍数则体现市场对未来增长和利润质量的预期。"
     
     # Extract key figures from analysis_df
     if analysis_df is not None and not analysis_df.empty:

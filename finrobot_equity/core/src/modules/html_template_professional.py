@@ -123,6 +123,10 @@ def _has_real_content(value) -> bool:
         return False
     lowered = _re.sub(r"\s+", " ", text.lower())
     empty_markers = [
+        "未返回",
+        "未生成",
+        "未评级",
+        "不适用",
         "not available",
         "analysis not available",
         "data not available",
@@ -145,7 +149,7 @@ def _chart_card(title: str, path: str, caption: str = "") -> str:
         <div class="chart-container">
             <div style="padding:2.5rem 1rem; text-align:center; color:#64748b; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:0.5rem;">
                 <strong>{title}</strong><br>
-                Chart data was not returned by the upstream data source for this run.
+                本次上游数据源未返回可用图表数据。
             </div>
             {f'<p class="caption mt-2">{caption}</p>' if caption else ''}
         </div>
@@ -163,9 +167,8 @@ def _section_html(section_id: str, title: str, body_html: str, classes: str = "m
         body_html = (
             "<div class='content-card'>"
             "<p class='body-text' style='color:#64748b;'>"
-            "This module is part of the full research-report framework, but the upstream data source "
-            "did not return enough usable data for this run. Review API permissions, ticker coverage, "
-            "or rerun with richer peer/news inputs."
+            "该模块属于完整研报框架，但本次上游数据源未返回足够可用数据。"
+            "请检查 API 权限、标的覆盖范围，或补充同行/新闻输入后重试。"
             "</p></div>"
         )
     return f"""
@@ -177,57 +180,55 @@ def _section_html(section_id: str, title: str, body_html: str, classes: str = "m
 
 
 def _fallback_investment_thesis(data: dict) -> str:
-    company = data.get("company_name_full", "The company")
+    company = data.get("company_name_full", "该公司")
     ticker = data.get("company_ticker", "")
     figures = data.get("revenue_key_figures", {}) or {}
     revenue = next((value for key, value in figures.items() if str(key).startswith("Revenue Growth (")), "")
     thesis = (
-        f"{company} ({ticker}) should be evaluated through three lenses: revenue growth durability, "
-        "EBITDA margin trajectory, and valuation relative to peers. The financial tables and charts "
-        "below provide the primary evidence for the investment case."
+        f"{company} ({ticker}) 应从收入增长可持续性、EBITDA 利润率趋势、以及相对同行估值三个维度进行评估。"
+        "下方财务表格和图表是形成投资判断的主要证据。"
     )
     if revenue:
-        thesis += f" Latest reported revenue growth was {revenue}."
+        thesis += f" 最新披露收入增长为 {revenue}。"
     return thesis
 
 
 def _fallback_company_overview(data: dict) -> str:
-    company = data.get("company_name_full", "The company")
+    company = data.get("company_name_full", "该公司")
     ticker = data.get("company_ticker", "")
     sector = data.get("sector", "")
-    sector_text = f" in the {sector} sector" if _has_real_content(sector) else ""
+    sector_text = f"，所属行业为 {sector}" if _has_real_content(sector) else ""
     return (
-        f"{company} ({ticker}) is analyzed{sector_text} using financial statements, market data, "
-        "valuation metrics and peer comparison data. The sections below emphasize measurable operating "
-        "trends and valuation inputs rather than unsupported narrative."
+        f"{company} ({ticker}){sector_text}。本报告基于财务报表、市场数据、估值指标和同行比较进行分析，"
+        "重点呈现可量化的经营趋势和估值输入，而不是没有数据支撑的叙述。"
     )
 
 
 def _fallback_valuation_overview(data: dict) -> str:
-    company = data.get("company_name_full", "The company")
+    company = data.get("company_name_full", "该公司")
     fwd_pe = data.get("fwd_pe", "N/A")
     pb_ratio = data.get("pb_ratio", "N/A")
     market_cap = data.get("market_cap", "N/A")
-    parts = [f"{company}'s valuation should be read alongside growth, margin and peer comparison data."]
+    parts = [f"{company} 的估值需要结合增长、利润率和同行比较共同判断。"]
     metrics = []
     if _has_real_content(fwd_pe):
-        metrics.append(f"forward P/E {fwd_pe}")
+        metrics.append(f"远期 P/E {fwd_pe}")
     if _has_real_content(pb_ratio):
         metrics.append(f"P/B {pb_ratio}")
     if _has_real_content(market_cap):
-        metrics.append(f"market cap {market_cap}")
+        metrics.append(f"市值 {market_cap}")
     if metrics:
-        parts.append("Current valuation snapshot: " + ", ".join(metrics) + ".")
+        parts.append("当前估值快照：" + "，".join(metrics) + "。")
     return " ".join(parts)
 
 
 HTML_PROFESSIONAL_TEMPLATE = """
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{company_name_full} ({company_ticker}) - Equity Research Report</title>
+    <title>{company_name_full} ({company_ticker}) - 股票研究报告</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
@@ -403,7 +404,7 @@ HTML_PROFESSIONAL_TEMPLATE = """
     <div style="background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%); padding: 2.5rem 2rem 2rem;">
         <div class="max-w-4xl mx-auto">
             <div class="flex items-center gap-3 mb-4">
-                <span style="background: rgba(99,102,241,0.2); color: #a5b4fc; padding: 0.2rem 0.75rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 500; letter-spacing: 0.05em;">AI EQUITY RESEARCH</span>
+                <span style="background: rgba(99,102,241,0.2); color: #a5b4fc; padding: 0.2rem 0.75rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 500; letter-spacing: 0.05em;">AI 股票研究</span>
                 <span style="color: #64748b; font-size: 0.8rem;">{report_date}</span>
             </div>
             <h1 style="color: #ffffff; font-size: 2rem; font-weight: 700; margin-bottom: 0.5rem; letter-spacing: -0.02em;">{company_name_full}</h1>
@@ -413,15 +414,15 @@ HTML_PROFESSIONAL_TEMPLATE = """
             </div>
             <div class="flex items-end gap-8">
                 <div>
-                    <p style="color: #64748b; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.2rem;">Rating</p>
+                    <p style="color: #64748b; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.2rem;">评级</p>
                     <span class="rating-badge {rating_color_class}">{rating}</span>
                 </div>
                 <div>
-                    <p style="color: #64748b; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.2rem;">Price</p>
+                    <p style="color: #64748b; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.2rem;">股价</p>
                     <p style="color: #ffffff; font-size: 1.5rem; font-weight: 700;">{share_price}</p>
                 </div>
                 <div>
-                    <p style="color: #64748b; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.2rem;">Target</p>
+                    <p style="color: #64748b; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.2rem;">目标价</p>
                     <p style="color: #a5b4fc; font-size: 1.5rem; font-weight: 700;">{target_price}</p>
                 </div>
             </div>
@@ -433,15 +434,15 @@ HTML_PROFESSIONAL_TEMPLATE = """
         <section class="mb-10">
             <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
                 <div class="metric-card">
-                    <p style="color: #94a3b8; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem;">Market Cap</p>
+                    <p style="color: #94a3b8; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem;">市值</p>
                     <p style="color: #0f172a; font-size: 1rem; font-weight: 600;">{market_cap}</p>
                 </div>
                 <div class="metric-card">
-                    <p style="color: #94a3b8; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem;">P/E (Fwd)</p>
+                    <p style="color: #94a3b8; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem;">远期 P/E</p>
                     <p style="color: #0f172a; font-size: 1rem; font-weight: 600;">{fwd_pe}</p>
                 </div>
                 <div class="metric-card">
-                    <p style="color: #94a3b8; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem;">P/B Ratio</p>
+                    <p style="color: #94a3b8; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem;">P/B</p>
                     <p style="color: #0f172a; font-size: 1rem; font-weight: 600;">{pb_ratio}</p>
                 </div>
                 <div class="metric-card">
@@ -449,11 +450,11 @@ HTML_PROFESSIONAL_TEMPLATE = """
                     <p style="color: #0f172a; font-size: 1rem; font-weight: 600;">{roe}</p>
                 </div>
                 <div class="metric-card">
-                    <p style="color: #94a3b8; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem;">Div. Yield</p>
+                    <p style="color: #94a3b8; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem;">股息率</p>
                     <p style="color: #0f172a; font-size: 1rem; font-weight: 600;">{dividend_yield}</p>
                 </div>
                 <div class="metric-card">
-                    <p style="color: #94a3b8; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem;">52W Range</p>
+                    <p style="color: #94a3b8; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem;">52周区间</p>
                     <p style="color: #0f172a; font-size: 1rem; font-weight: 600;">{week_52_range}</p>
                 </div>
             </div>
@@ -465,26 +466,26 @@ HTML_PROFESSIONAL_TEMPLATE = """
 
         <!-- Financial Analysis -->
         <section class="mb-10 page-break" id="financial-analysis">
-            <h2 class="section-title">Financial Analysis</h2>
+            <h2 class="section-title">财务表现分析</h2>
 
-            <h3 class="heading-2">Revenue & EBITDA Performance</h3>
+            <h3 class="heading-2">收入与 EBITDA 表现</h3>
             <div class="two-column">
                 <div class="content-card">
                     <p class="body-text">{revenue_analysis_text}</p>
                     <div class="mt-4">
-                        <p class="heading-3">Key Figures</p>
+                        <p class="heading-3">关键数据</p>
                         {revenue_key_figures_html}
                     </div>
                 </div>
                 {revenue_chart_html}
             </div>
 
-            <h3 class="heading-2">Earnings & Valuation Metrics</h3>
+            <h3 class="heading-2">盈利与估值指标</h3>
             <div class="two-column">
                 <div class="content-card">
                     <p class="body-text">{eps_analysis_text}</p>
                     <div class="mt-4">
-                        <p class="heading-3">Key Figures</p>
+                        <p class="heading-3">关键数据</p>
                         {eps_key_figures_html}
                     </div>
                 </div>
@@ -494,7 +495,7 @@ HTML_PROFESSIONAL_TEMPLATE = """
 
         <!-- Valuation Analysis -->
         <section class="mb-10" id="valuation">
-            <h2 class="section-title">Valuation Analysis</h2>
+            <h2 class="section-title">估值分析</h2>
             <div class="body-text">{valuation_overview}</div>
 
             <!-- Target Price Derivation -->
@@ -507,7 +508,7 @@ HTML_PROFESSIONAL_TEMPLATE = """
 
         <!-- Sensitivity Analysis -->
         <section class="mb-10" id="sensitivity">
-            <h2 class="section-title">Sensitivity Analysis</h2>
+            <h2 class="section-title">敏感性分析</h2>
             <div class="content-card">
                 {sensitivity_analysis_html}
             </div>
@@ -520,13 +521,13 @@ HTML_PROFESSIONAL_TEMPLATE = """
 
         <!-- Competition & Risk -->
         <section class="mb-10" id="competition-risk">
-            <h2 class="section-title">Competitive Landscape</h2>
+            <h2 class="section-title">竞争格局与风险</h2>
 
             <!-- Peer Comparison Tables -->
             {peer_ebitda_section_html}
             {peer_ev_comp_section_html}
 
-            <h3 class="heading-2">Analysis</h3>
+            <h3 class="heading-2">同行分析</h3>
             <div class="body-text">{competitor_analysis}</div>
 
             {risks_section_html}
@@ -539,12 +540,12 @@ HTML_PROFESSIONAL_TEMPLATE = """
         <!-- Disclaimer -->
         <section class="mt-12" id="disclaimer" style="background: #f8fafc; margin-left: -1.5rem; margin-right: -1.5rem; padding: 1.5rem; border-radius: 0.75rem;">
             <div class="flex items-center gap-2 mb-2">
-                <span style="background: linear-gradient(90deg, #6366f1, #8b5cf6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 600; font-size: 0.75rem;">Powered by FinRobot AI</span>
+                <span style="background: linear-gradient(90deg, #6366f1, #8b5cf6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 600; font-size: 0.75rem;">FinRobot AI 生成</span>
                 <span style="color: #cbd5e1;">|</span>
                 <span style="color: #94a3b8; font-size: 0.7rem;">{research_source}</span>
             </div>
             <p style="color: #94a3b8; font-size: 0.65rem; line-height: 1.5;">{disclaimer_text}</p>
-            <p style="color: #cbd5e1; font-size: 0.65rem; margin-top: 0.5rem;">Data: {data_source_text} &middot; Generated: {report_generated_time}</p>
+            <p style="color: #cbd5e1; font-size: 0.65rem; margin-top: 0.5rem;">数据：{data_source_text} &middot; 生成时间：{report_generated_time}</p>
         </section>
     </div>
 </body>
@@ -555,19 +556,19 @@ HTML_PROFESSIONAL_TEMPLATE = """
 def format_risks_to_html(risks_text: str) -> str:
     """将风险文本格式化为 HTML 列表"""
     if not risks_text:
-        return "<p class='body-text' style='color:#94a3b8; font-style:italic;'>Risk factors not available.</p>"
+        return "<p class='body-text' style='color:#94a3b8; font-style:italic;'>本次未生成有效风险因素内容。</p>"
 
     result = _markdown_to_html(risks_text)
-    return result if result.strip() else "<p class='body-text' style='color:#94a3b8; font-style:italic;'>Risk factors not available.</p>"
+    return result if result.strip() else "<p class='body-text' style='color:#94a3b8; font-style:italic;'>本次未生成有效风险因素内容。</p>"
 
 
 def format_takeaways_to_html(takeaways_text: str) -> str:
     """将要点文本格式化为 HTML 列表"""
     if not takeaways_text:
-        return "<p class='body-text' style='color:#94a3b8; font-style:italic;'>Key takeaways not available.</p>"
+        return "<p class='body-text' style='color:#94a3b8; font-style:italic;'>本次未生成有效核心结论。</p>"
 
     result = _markdown_to_html(takeaways_text)
-    return result if result.strip() else "<p class='body-text' style='color:#94a3b8; font-style:italic;'>Key takeaways not available.</p>"
+    return result if result.strip() else "<p class='body-text' style='color:#94a3b8; font-style:italic;'>本次未生成有效核心结论。</p>"
 
 
 def _format_figure_value(value) -> str:
@@ -607,7 +608,7 @@ def format_key_figures_html(figures: dict) -> str:
     for metric, value in figures.items():
         # 百分比和倍数保持原样，大数字转换单位
         display_val = str(value)
-        if isinstance(value, str) and ('%' in value or 'x' in value or 'N/A' in value):
+        if isinstance(value, str) and ('%' in value or 'x' in value or 'N/A' in value or '未返回' in value):
             display_val = value
         else:
             display_val = _format_figure_value(value)
@@ -619,7 +620,7 @@ def format_key_figures_html(figures: dict) -> str:
 def format_sensitivity_analysis_html_professional(sensitivity_data: dict) -> str:
     """格式化敏感性分析为专业 HTML"""
     if not sensitivity_data:
-        return "<p class='body-text' style='color:#94a3b8; font-style:italic;'>Sensitivity analysis not available.</p>"
+        return "<p class='body-text' style='color:#94a3b8; font-style:italic;'>本次未返回可用敏感性分析数据。</p>"
 
     html = ""
 
@@ -629,7 +630,7 @@ def format_sensitivity_analysis_html_professional(sensitivity_data: dict) -> str
 
     # Confidence Intervals
     if sensitivity_data.get('confidence_intervals'):
-        html += '<h3 class="heading-3">Forecast Confidence Intervals (95%)</h3>'
+        html += '<h3 class="heading-3">预测置信区间 (95%)</h3>'
         html += '<div style="display:grid; gap:0.5rem;">'
         for metric, ci in sensitivity_data['confidence_intervals'].items():
             if ci and isinstance(ci, dict):
@@ -642,13 +643,13 @@ def format_sensitivity_analysis_html_professional(sensitivity_data: dict) -> str
                 html += f'<div style="display:flex; justify-content:space-between; padding:0.4rem 0.6rem; background:#f8fafc; border-radius:0.375rem; font-size:0.85rem;"><span style="color:#64748b;">{metric}</span><span style="color:#0f172a; font-weight:500;">{low_val} — {high_val}</span></div>'
         html += '</div>'
 
-    return html if html else "<p class='body-text' style='color:#94a3b8; font-style:italic;'>Sensitivity analysis not available.</p>"
+    return html if html else "<p class='body-text' style='color:#94a3b8; font-style:italic;'>本次未返回可用敏感性分析数据。</p>"
 
 
 def format_catalyst_analysis_html_professional(catalyst_data: dict) -> str:
     """格式化催化剂分析为专业 HTML"""
     if not catalyst_data:
-        return "<p class='body-text' style='color:#94a3b8; font-style:italic;'>Catalyst analysis not available.</p>"
+        return "<p class='body-text' style='color:#94a3b8; font-style:italic;'>本次未返回可用催化因素数据。</p>"
 
     html = ""
 
@@ -659,7 +660,7 @@ def format_catalyst_analysis_html_professional(catalyst_data: dict) -> str:
     # Top Catalysts
     top_catalysts = catalyst_data.get('top_catalysts', [])
     if top_catalysts:
-        html += '<h3 class="heading-3">Upcoming Catalysts</h3>'
+        html += '<h3 class="heading-3">近期催化因素</h3>'
         html += '<div style="display:grid; gap:0.5rem;">'
         for cat in top_catalysts:
             event_type = cat.get('event_type') or cat.get('type', 'Event')
@@ -675,7 +676,7 @@ def format_catalyst_analysis_html_professional(catalyst_data: dict) -> str:
                 bg = '#f1f5f9'; border = '#94a3b8'; text_color = '#475569'; icon = '&#9679;'
 
             html += f'<div style="padding:0.6rem 0.75rem; background:{bg}; border-left:3px solid {border}; border-radius:0.375rem; font-size:0.85rem;">'
-            html += f'<div style="display:flex; align-items:center; gap:0.5rem;"><span style="color:{text_color}; font-size:0.7rem;">{icon}</span><span style="background:{border}20; color:{text_color}; padding:0.1rem 0.4rem; border-radius:0.25rem; font-size:0.7rem; font-weight:600; text-transform:uppercase;">{event_type}</span><span style="font-size:0.65rem; color:{text_color};">Impact: {impact}</span></div>'
+            html += f'<div style="display:flex; align-items:center; gap:0.5rem;"><span style="color:{text_color}; font-size:0.7rem;">{icon}</span><span style="background:{border}20; color:{text_color}; padding:0.1rem 0.4rem; border-radius:0.25rem; font-size:0.7rem; font-weight:600; text-transform:uppercase;">{event_type}</span><span style="font-size:0.65rem; color:{text_color};">影响：{impact}</span></div>'
             html += f'<p style="color:#334155; margin-top:0.25rem; font-size:0.85rem;">{description}</p>'
             html += '</div>'
         html += '</div>'
@@ -684,7 +685,7 @@ def format_catalyst_analysis_html_professional(catalyst_data: dict) -> str:
     categorized = catalyst_data.get('categorized', {})
     if categorized:
         if categorized.get('positive'):
-            html += '<h3 class="heading-3">Positive Catalysts</h3>'
+            html += '<h3 class="heading-3">正面催化</h3>'
             html += '<div style="display:grid; gap:0.35rem;">'
             for item in categorized['positive']:
                 desc = item.get('description', '')
@@ -693,7 +694,7 @@ def format_catalyst_analysis_html_professional(catalyst_data: dict) -> str:
             html += '</div>'
 
         if categorized.get('negative'):
-            html += '<h3 class="heading-3">Risk Factors</h3>'
+            html += '<h3 class="heading-3">风险因素</h3>'
             html += '<div style="display:grid; gap:0.35rem;">'
             for item in categorized['negative']:
                 desc = item.get('description', '')
@@ -701,7 +702,7 @@ def format_catalyst_analysis_html_professional(catalyst_data: dict) -> str:
                     html += f'<div style="padding:0.4rem 0.6rem; background:#fee2e2; border-radius:0.375rem; font-size:0.85rem; color:#991b1b;">&#9888; {desc}</div>'
             html += '</div>'
 
-    return html if html else "<p class='body-text' style='color:#94a3b8; font-style:italic;'>Catalyst analysis not available.</p>"
+    return html if html else "<p class='body-text' style='color:#94a3b8; font-style:italic;'>本次未返回可用催化因素数据。</p>"
 
 
 def format_retail_sentiment_html_professional(sentiment_data: dict) -> str:
@@ -712,17 +713,17 @@ def format_retail_sentiment_html_professional(sentiment_data: dict) -> str:
     avg_buzz = sentiment_data.get("average_buzz")
     bullish_avg = sentiment_data.get("bullish_avg")
     coverage = sentiment_data.get("coverage", "0/3")
-    alignment = sentiment_data.get("source_alignment", "No coverage")
+    alignment = sentiment_data.get("source_alignment", "未覆盖")
     sources = sentiment_data.get("sources", [])
 
-    html = '<h3 class="heading-3">Retail Sentiment Insights</h3>'
+    html = '<h3 class="heading-3">散户情绪观察</h3>'
     html += '<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:0.75rem; margin-bottom:0.75rem;">'
 
     summary_cards = [
-        ("Average Buzz", f"{avg_buzz}/100" if avg_buzz is not None else "N/A"),
-        ("Bullish Avg", f"{bullish_avg}%" if bullish_avg is not None else "N/A"),
-        ("Source Alignment", alignment),
-        ("Coverage", coverage),
+        ("平均热度", f"{avg_buzz}/100" if avg_buzz is not None else "N/A"),
+        ("看多比例均值", f"{bullish_avg}%" if bullish_avg is not None else "N/A"),
+        ("来源一致性", alignment),
+        ("覆盖度", coverage),
     ]
     for label, value in summary_cards:
         html += (
@@ -746,10 +747,10 @@ def format_retail_sentiment_html_professional(sentiment_data: dict) -> str:
             html += (
                 '<div style="background:#ffffff; border:1px solid #e2e8f0; border-radius:0.625rem; padding:0.75rem 0.85rem;">'
                 f'<div style="font-size:0.82rem; font-weight:700; color:#0f172a; margin-bottom:0.45rem;">{source["label"]}</div>'
-                f'<div style="font-size:0.78rem; color:#475569;">Buzz <strong>{source["buzz_score"]}/100</strong></div>'
-                f'<div style="font-size:0.78rem; color:#475569;">Bullish <strong>{bullish_text}</strong></div>'
+                f'<div style="font-size:0.78rem; color:#475569;">热度 <strong>{source["buzz_score"]}/100</strong></div>'
+                f'<div style="font-size:0.78rem; color:#475569;">看多 <strong>{bullish_text}</strong></div>'
                 f'<div style="font-size:0.78rem; color:#475569;">{source["activity_label"]} <strong>{source["activity_value"]}</strong></div>'
-                f'<div style="font-size:0.78rem; color:#475569;">Trend <strong>{source["trend"]}</strong></div>'
+                f'<div style="font-size:0.78rem; color:#475569;">趋势 <strong>{source["trend"]}</strong></div>'
                 '</div>'
             )
         html += '</div>'
@@ -775,11 +776,11 @@ def format_enhanced_news_html_professional(news_data: dict) -> str:
                 bg = '#fee2e2'; color = '#991b1b'
             else:
                 bg = '#f1f5f9'; color = '#475569'
-            html += f'<div class="mt-3" style="display:inline-flex; align-items:center; gap:0.5rem;"><span style="font-size:0.85rem; font-weight:500; color:#64748b;">Sentiment:</span><span style="background:{bg}; color:{color}; padding:0.2rem 0.6rem; border-radius:9999px; font-size:0.8rem; font-weight:600;">{overall.upper()}</span></div>'
+            html += f'<div class="mt-3" style="display:inline-flex; align-items:center; gap:0.5rem;"><span style="font-size:0.85rem; font-weight:500; color:#64748b;">情绪：</span><span style="background:{bg}; color:{color}; padding:0.2rem 0.6rem; border-radius:9999px; font-size:0.8rem; font-weight:600;">{overall.upper()}</span></div>'
 
     # Categories
     if news_data.get('categories'):
-        html += '<h3 class="heading-3">News by Category</h3>'
+        html += '<h3 class="heading-3">新闻分类</h3>'
         html += '<div style="display:flex; flex-wrap:wrap; gap:0.5rem;">'
         for cat, count in news_data['categories'].items():
             html += f'<span style="background:#f1f5f9; color:#475569; padding:0.3rem 0.6rem; border-radius:9999px; font-size:0.8rem;">{cat} <strong>{count}</strong></span>'
@@ -795,8 +796,8 @@ def format_enhanced_news_html_professional(news_data: dict) -> str:
                     cat = article.get('category', 'general')
                     category_counts[cat] = category_counts.get(cat, 0) + 1
 
-            html += f'<div class="mt-3" style="display:inline-flex; align-items:center; gap:0.5rem;"><span style="font-size:0.85rem; font-weight:500; color:#64748b;">Articles analyzed:</span><span style="background:#eef2ff; color:#4f46e5; padding:0.2rem 0.5rem; border-radius:9999px; font-size:0.85rem; font-weight:600;">{len(articles)}</span></div>'
-            html += '<h3 class="heading-3">By Category</h3>'
+            html += f'<div class="mt-3" style="display:inline-flex; align-items:center; gap:0.5rem;"><span style="font-size:0.85rem; font-weight:500; color:#64748b;">已分析文章：</span><span style="background:#eef2ff; color:#4f46e5; padding:0.2rem 0.5rem; border-radius:9999px; font-size:0.85rem; font-weight:600;">{len(articles)}</span></div>'
+            html += '<h3 class="heading-3">按类别</h3>'
             html += '<div style="display:flex; flex-wrap:wrap; gap:0.5rem;">'
             for cat, count in sorted(category_counts.items(), key=lambda x: -x[1]):
                 html += f'<span style="background:#f1f5f9; color:#475569; padding:0.3rem 0.6rem; border-radius:9999px; font-size:0.8rem;">{cat} <strong>{count}</strong></span>'
@@ -813,11 +814,11 @@ def format_valuation_breakdown_html(valuation_data: dict) -> str:
     methods = valuation_data['methods']
     synthesis = valuation_data.get('synthesis', {})
 
-    html = '<h3 class="heading-2">Target Price Derivation</h3>'
+    html = '<h3 class="heading-2">目标价推导</h3>'
 
     # 方法对比表
     html += '<div style="overflow-x:auto; margin-bottom:1rem;"><table class="data-table">'
-    html += '<thead><tr><th>Method</th><th>Target Price</th><th>Low</th><th>High</th><th>Weight</th><th>Key Assumptions</th></tr></thead><tbody>'
+    html += '<thead><tr><th>方法</th><th>目标价</th><th>低位</th><th>高位</th><th>权重</th><th>核心假设</th></tr></thead><tbody>'
 
     for m in methods:
         target = f"${m['target_price']:.2f}"
@@ -846,22 +847,22 @@ def format_valuation_breakdown_html(valuation_data: dict) -> str:
         synth_range = synthesis.get('range', (0, 0))
         upside = synthesis.get('upside', 0)
         upside_color = '#10b981' if upside >= 0 else '#ef4444'
-        upside_label = 'Upside' if upside >= 0 else 'Downside'
+        upside_label = '上行空间' if upside >= 0 else '下行风险'
 
         html += f'''
         <div style="background:linear-gradient(135deg, #eef2ff 0%, #f5f3ff 100%); border-radius:0.75rem;
             padding:1rem 1.25rem; display:flex; justify-content:space-between; align-items:center;
             flex-wrap:wrap; gap:1rem; margin-bottom:1.5rem;">
             <div>
-                <p style="color:#64748b; font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.15rem;">Weighted Target Price</p>
+                <p style="color:#64748b; font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.15rem;">加权目标价</p>
                 <p style="color:#0f172a; font-size:1.5rem; font-weight:700;">${synth_target:.2f}</p>
             </div>
             <div>
-                <p style="color:#64748b; font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.15rem;">Valuation Range</p>
+                <p style="color:#64748b; font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.15rem;">估值区间</p>
                 <p style="color:#0f172a; font-size:1rem; font-weight:600;">${synth_range[0]:.2f} - ${synth_range[1]:.2f}</p>
             </div>
             <div>
-                <p style="color:#64748b; font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.15rem;">Implied {upside_label}</p>
+                <p style="color:#64748b; font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.15rem;">隐含{upside_label}</p>
                 <p style="color:{upside_color}; font-size:1rem; font-weight:700;">{abs(upside):.1f}%</p>
             </div>
         </div>'''
@@ -878,13 +879,13 @@ def format_advanced_charts_html_professional(data: dict) -> str:
 
     charts = []
     if stock_price_chart:
-        charts.append(('Stock Price Performance', stock_price_chart, 'Price with 20/50/200-day moving averages'))
+        charts.append(('股价表现', stock_price_chart, '价格与 20/50/200 日均线'))
     if technical_chart:
-        charts.append(('Technical Indicators', technical_chart, 'RSI & MACD momentum signals'))
+        charts.append(('技术指标', technical_chart, 'RSI 与 MACD 动量信号'))
     if radar_chart:
-        charts.append(('Financial Ratios', radar_chart, 'Multi-dimensional financial health'))
+        charts.append(('财务比率', radar_chart, '多维度财务健康度'))
     if cashflow_chart:
-        charts.append(('Cash Flow Analysis', cashflow_chart, 'Operating, investing & financing'))
+        charts.append(('现金流分析', cashflow_chart, '经营、投资与融资现金流'))
 
     if charts:
         html = '<div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem;">'
@@ -900,7 +901,7 @@ def format_advanced_charts_html_professional(data: dict) -> str:
         return html
 
     # Fallback: 文字版技术分析 — 使用真实指标数据
-    ticker = data.get('company_ticker', 'Stock')
+    ticker = data.get('company_ticker', '股票')
     share_price = data.get('share_price', 'N/A')
     w52 = data.get('52w_range', data.get('week_52_range', 'N/A'))
     ti = data.get('technical_indicators', {})
@@ -938,22 +939,22 @@ def format_advanced_charts_html_professional(data: dict) -> str:
     val_style = 'font-size:0.8rem; color:#334155; line-height:1.6;'
 
     html = '<div class="content-card">'
-    html += f'<h3 class="heading-3" style="margin-top:0;">Technical Overview — {ticker}</h3>'
-    html += f'<p class="body-text">Current Price: <strong>{share_price}</strong>'
+    html += f'<h3 class="heading-3" style="margin-top:0;">技术面概览 - {ticker}</h3>'
+    html += f'<p class="body-text">当前价格：<strong>{share_price}</strong>'
     if w52 and w52 != 'N/A':
-        html += f' &nbsp;|&nbsp; 52-Week Range: <strong>{w52}</strong>'
+        html += f' &nbsp;|&nbsp; 52周区间：<strong>{w52}</strong>'
     html += '</p>'
 
     # Overall signal
     overall = ti.get('overall_signal', 'N/A')
     if overall and overall != 'N/A':
         html += f'<div style="margin:0.75rem 0; display:flex; align-items:center; gap:0.5rem;">'
-        html += f'<span style="color:#64748b; font-size:0.8rem; font-weight:500;">Overall Technical Signal:</span>'
+        html += f'<span style="color:#64748b; font-size:0.8rem; font-weight:500;">综合技术信号：</span>'
         html += _overall_badge(overall)
         html += '</div>'
 
     if not has_technical_metrics:
-        html += '<p class="body-text" style="color:#64748b;">Detailed SMA, RSI, MACD and volume indicators were not available from the current data source.</p>'
+        html += '<p class="body-text" style="color:#64748b;">当前数据源未返回完整 SMA、RSI、MACD 和成交量指标。</p>'
         html += '</div>'
         return html
 
@@ -969,24 +970,24 @@ def format_advanced_charts_html_professional(data: dict) -> str:
     if sma200:
         ma_detail += f' &nbsp;|&nbsp; SMA 200: <strong>${sma200:.2f}</strong>'
     if not ma_detail:
-        ma_detail = 'Price data not available for SMA calculation.'
-    html += f'<div style="{card_style}"><p style="{label_style}">Moving Averages {_signal_badge(ma_sig)}</p><p style="{val_style}">{ma_detail}</p></div>'
+        ma_detail = '未返回可用于计算 SMA 的价格数据。'
+    html += f'<div style="{card_style}"><p style="{label_style}">移动均线 {_signal_badge(ma_sig)}</p><p style="{val_style}">{ma_detail}</p></div>'
 
     # 2. RSI
     rsi = ti.get('rsi14')
     rsi_sig = ti.get('rsi_signal', 'N/A')
-    rsi_detail = f'RSI (14): <strong>{rsi:.1f}</strong>' if rsi else 'RSI data not available.'
+    rsi_detail = f'RSI (14): <strong>{rsi:.1f}</strong>' if rsi else '未返回 RSI 数据。'
     if rsi:
         if rsi > 70:
-            rsi_detail += ' — Overbought territory, potential pullback.'
+            rsi_detail += ' - 处于超买区间，需关注回调风险。'
         elif rsi < 30:
-            rsi_detail += ' — Oversold territory, potential bounce.'
+            rsi_detail += ' - 处于超卖区间，可能存在反弹。'
         elif rsi > 55:
-            rsi_detail += ' — Bullish momentum range.'
+            rsi_detail += ' - 动量偏强。'
         elif rsi < 45:
-            rsi_detail += ' — Bearish momentum range.'
+            rsi_detail += ' - 动量偏弱。'
         else:
-            rsi_detail += ' — Neutral zone.'
+            rsi_detail += ' - 中性区间。'
     html += f'<div style="{card_style}"><p style="{label_style}">RSI {_signal_badge(rsi_sig)}</p><p style="{val_style}">{rsi_detail}</p></div>'
 
     # 3. MACD
@@ -997,7 +998,7 @@ def format_advanced_charts_html_professional(data: dict) -> str:
     if macd_val is not None:
         macd_detail = f'MACD: <strong>{macd_val:.2f}</strong> | Signal: <strong>{macd_sig_val:.2f}</strong> | Histogram: <strong>{macd_hist:.2f}</strong>'
     else:
-        macd_detail = 'MACD data not available.'
+        macd_detail = '未返回 MACD 数据。'
     html += f'<div style="{card_style}"><p style="{label_style}">MACD {_signal_badge(macd_sig)}</p><p style="{val_style}">{macd_detail}</p></div>'
 
     # 4. Volume
@@ -1006,51 +1007,88 @@ def format_advanced_charts_html_professional(data: dict) -> str:
     vol_sig = ti.get('volume_signal', 'N/A')
     if avg_vol and latest_vol:
         vol_ratio = latest_vol / avg_vol if avg_vol > 0 else 0
-        vol_detail = f'Latest: <strong>{latest_vol/1e6:.1f}M</strong> | 20d Avg: <strong>{avg_vol/1e6:.1f}M</strong> | Ratio: <strong>{vol_ratio:.2f}x</strong>'
+        vol_detail = f'最新：<strong>{latest_vol/1e6:.1f}M</strong> | 20日均值：<strong>{avg_vol/1e6:.1f}M</strong> | 倍数：<strong>{vol_ratio:.2f}x</strong>'
     else:
-        vol_detail = 'Volume data not available.'
-    html += f'<div style="{card_style}"><p style="{label_style}">Volume {_signal_badge(vol_sig)}</p><p style="{val_style}">{vol_detail}</p></div>'
+        vol_detail = '未返回成交量数据。'
+    html += f'<div style="{card_style}"><p style="{label_style}">成交量 {_signal_badge(vol_sig)}</p><p style="{val_style}">{vol_detail}</p></div>'
 
     html += '</div></div>'
     return html
 
 
+def _clean_rating(api_rating: str) -> str:
+    if not _has_real_content(api_rating) or str(api_rating).strip().upper() == "N/A":
+        return "未评级"
+    rating = str(api_rating).strip()
+    mapping = {
+        "Strong Buy": "强烈买入",
+        "Buy": "买入",
+        "Outperform": "跑赢大盘",
+        "Overweight": "增持",
+        "Hold": "持有",
+        "Neutral": "中性",
+        "Underperform": "跑输大盘",
+        "Underweight": "低配",
+        "Sell": "卖出",
+        "Strong Sell": "强烈卖出",
+    }
+    return mapping.get(rating, rating)
+
+
+def _display_metric(value, zero_is_missing: bool = False) -> str:
+    if value is None:
+        return "未返回"
+    text = str(value).strip()
+    if not text or text.lower() in {"n/a", "na", "none", "null", "nan", "not available"}:
+        return "未返回"
+    if text in {"未返回", "不适用"}:
+        return text
+    if zero_is_missing:
+        try:
+            numeric = float(text.replace("$", "").replace(",", "").replace("x", "").replace("X", "").replace("%", ""))
+            if numeric == 0:
+                return "未返回"
+        except (TypeError, ValueError):
+            pass
+    return text
+
+
 def _derive_rating(share_price, target_price, api_rating: str) -> str:
-    """根据 target_price vs share_price 推导评级，忽略可能矛盾的外部 API 评级。
+    """根据 target_price vs share_price 推导评级；目标价缺失时不从 0 推导评级。
 
     逻辑：
-    - upside >= 15%  → Buy
-    - upside 5~15%   → Outperform
-    - upside -5~5%   → Hold
-    - upside -15~-5%  → Underperform
-    - upside <= -15% → Sell
+    - upside >= 15%  -> 买入
+    - upside 5~15%   -> 跑赢大盘
+    - upside -5~5%   -> 持有
+    - upside -15~-5%  -> 跑输大盘
+    - upside <= -15% -> 卖出
     如果价格数据无效，fallback 到 API 评级。
     """
     try:
         price = float(str(share_price).replace('$', '').replace(',', ''))
         target = float(str(target_price).replace('$', '').replace(',', ''))
-        if price <= 0:
-            return api_rating or 'N/A'
+        if price <= 0 or target <= 0:
+            return _clean_rating(api_rating)
         upside = (target - price) / price
         if upside >= 0.15:
-            return 'Buy'
+            return '买入'
         elif upside >= 0.05:
-            return 'Outperform'
+            return '跑赢大盘'
         elif upside >= -0.05:
-            return 'Hold'
+            return '持有'
         elif upside >= -0.15:
-            return 'Underperform'
+            return '跑输大盘'
         else:
-            return 'Sell'
+            return '卖出'
     except (ValueError, TypeError, ZeroDivisionError):
-        return api_rating or 'N/A'
+        return _clean_rating(api_rating)
 
 
 def get_rating_color_class(rating: str) -> str:
     """根据评级返回颜色类"""
-    if rating in ['Buy', 'Outperform', 'Overweight', 'Strong Buy']:
+    if rating in ['Buy', 'Outperform', 'Overweight', 'Strong Buy', '买入', '跑赢大盘', '增持', '强烈买入']:
         return 'rating-buy'
-    elif rating in ['Sell', 'Underperform', 'Underweight', 'Strong Sell']:
+    elif rating in ['Sell', 'Underperform', 'Underweight', 'Strong Sell', '卖出', '跑输大盘', '低配', '强烈卖出']:
         return 'rating-sell'
     else:
         return 'rating-hold'
@@ -1080,109 +1118,109 @@ def render_professional_html_report(data: dict) -> str:
 
     investment_thesis_section_html = _section_html(
         "investment-thesis",
-        "Investment Thesis",
+        "投资观点",
         f'<div class="highlight-box"><p class="body-text">{raw_tagline}</p></div>',
     )
     company_body = f'<div class="body-text">{company_overview_html}</div>'
     if _has_real_content(investment_overview_html):
-        company_body += f'<h3 class="heading-2">Investment Overview</h3><div class="body-text">{investment_overview_html}</div>'
-    company_overview_section_html = _section_html("company-overview", "Company Overview", company_body)
+        company_body += f'<h3 class="heading-2">投资概览</h3><div class="body-text">{investment_overview_html}</div>'
+    company_overview_section_html = _section_html("company-overview", "公司概览", company_body)
     news_body_parts = []
     if _has_real_content(news_summary_html):
-        news_body_parts.append(f'<h3 class="heading-3" style="margin-top:0;">News Summary</h3><div class="body-text">{news_summary_html}</div>')
+        news_body_parts.append(f'<h3 class="heading-3" style="margin-top:0;">新闻摘要</h3><div class="body-text">{news_summary_html}</div>')
     if _has_real_content(retail_sentiment_html):
         news_body_parts.append(retail_sentiment_html)
     if _has_real_content(enhanced_news_html):
         news_body_parts.append(enhanced_news_html)
     news_section_html = _section_html(
         "news",
-        "Recent News & Events",
+        "近期新闻与事件",
         f'<div class="content-card">{"".join(news_body_parts)}</div>' if news_body_parts else "",
     )
     catalyst_section_html = _section_html(
         "catalysts",
-        "Key Catalysts",
+        "关键催化因素",
         f'<div class="content-card">{catalyst_analysis_html}</div>',
     )
     advanced_charts_wrapper_html = _section_html(
         "advanced-charts",
-        "Technical & Advanced Analysis",
+        "技术面与高级分析",
         advanced_charts_section_html,
         classes="mb-10 page-break",
     )
     peer_valuation_body = f"""
-    <h3 class="heading-2">Peer Comparison</h3>
+    <h3 class="heading-2">同行估值比较</h3>
     <div class="two-column">
-        <div>{peer_ev_table_html if _has_real_content(peer_ev_table_html) else '<p class="body-text" style="color:#64748b;">Peer EV/EBITDA table data was not returned for this run.</p>'}</div>
-        {_chart_card('EV/EBITDA Peer Comparison', data.get('ev_ebitda_chart_path', ''), 'EV/EBITDA Peer Comparison')}
+        <div>{peer_ev_table_html if _has_real_content(peer_ev_table_html) else '<p class="body-text" style="color:#64748b;">本次未返回同行 EV/EBITDA 表格数据。</p>'}</div>
+        {_chart_card('同行 EV/EBITDA 对比', data.get('ev_ebitda_chart_path', ''), '同行 EV/EBITDA 对比')}
     </div>
     """
     peer_valuation_section_html = peer_valuation_body
-    peer_ebitda_fallback_html = '<p class="body-text" style="color:#64748b;">Peer EBITDA table data was not returned for this run.</p>'
-    peer_ev_fallback_html = '<p class="body-text" style="color:#64748b;">Peer EV/EBITDA table data was not returned for this run.</p>'
-    financial_summary_fallback_html = '<p class="body-text" style="color:#64748b;">Financial summary table data was not returned for this run.</p>'
+    peer_ebitda_fallback_html = '<p class="body-text" style="color:#64748b;">本次未返回同行 EBITDA 表格数据。</p>'
+    peer_ev_fallback_html = '<p class="body-text" style="color:#64748b;">本次未返回同行 EV/EBITDA 表格数据。</p>'
+    financial_summary_fallback_html = '<p class="body-text" style="color:#64748b;">本次未返回财务摘要表格数据。</p>'
     peer_ebitda_section_html = (
-        f'<div class="content-card mb-6"><h3 class="heading-2" style="margin-top:0;">Peer EBITDA Comparison</h3>'
+        f'<div class="content-card mb-6"><h3 class="heading-2" style="margin-top:0;">同行 EBITDA 对比</h3>'
         f'{peer_ebitda_table_html if _has_real_content(peer_ebitda_table_html) else peer_ebitda_fallback_html}</div>'
     )
     peer_ev_comp_section_html = (
-        f'<div class="content-card mb-6"><h3 class="heading-2" style="margin-top:0;">Peer EV/EBITDA Comparison</h3>'
+        f'<div class="content-card mb-6"><h3 class="heading-2" style="margin-top:0;">同行 EV/EBITDA 对比</h3>'
         f'{peer_ev_table_html if _has_real_content(peer_ev_table_html) else peer_ev_fallback_html}</div>'
     )
     risks_section_html = (
-        f'<h3 class="heading-2">Risk Factors</h3><div class="content-card" style="border-left: 4px solid #ef4444;">{risks_html}</div>'
+        f'<h3 class="heading-2">主要风险</h3><div class="content-card" style="border-left: 4px solid #ef4444;">{risks_html}</div>'
     )
     major_takeaways_section_html = (
-        f'<h3 class="heading-2">Key Takeaways</h3><div class="content-card" style="border-left: 4px solid #10b981;">{major_takeaways_html}</div>'
+        f'<h3 class="heading-2">核心结论</h3><div class="content-card" style="border-left: 4px solid #10b981;">{major_takeaways_html}</div>'
     )
     credit_cashflow_section_html = (
-        f'<h3 class="heading-2">Credit & Cash Flow Metrics</h3>{credit_cashflow_table_html}'
+        f'<h3 class="heading-2">信用与现金流指标</h3>{credit_cashflow_table_html}'
         if _has_real_content(credit_cashflow_table_html) else ""
     )
-    financial_data_body = f'<h3 class="heading-2">Income Statement Summary</h3>{financial_summary_table_html if _has_real_content(financial_summary_table_html) else financial_summary_fallback_html}'
+    financial_data_body = f'<h3 class="heading-2">利润表摘要</h3>{financial_summary_table_html if _has_real_content(financial_summary_table_html) else financial_summary_fallback_html}'
     financial_data_body += credit_cashflow_section_html
     financial_data_section_html = _section_html(
         "financial-data",
-        "Financial Data",
+        "财务数据",
         financial_data_body,
         classes="mb-10 page-break",
     )
 
     # Prepare data with defaults
     report_data = {
-        'company_name_full': data.get('company_name_full', 'Company'),
+        'company_name_full': data.get('company_name_full', '公司'),
         'company_ticker': data.get('company_ticker', 'TICK'),
-        'sector': data.get('sector', 'Technology'),
+        'sector': data.get('sector', '未返回'),
         'rating': _derive_rating(data.get('share_price', 'N/A'), data.get('target_price', 'N/A'), data.get('rating', 'N/A')),
         'rating_color_class': get_rating_color_class(_derive_rating(data.get('share_price', 'N/A'), data.get('target_price', 'N/A'), data.get('rating', 'N/A'))),
-        'share_price': data.get('share_price', 'N/A'),
-        'target_price': data.get('target_price', 'N/A'),
+        'share_price': _display_metric(data.get('share_price', 'N/A'), zero_is_missing=True),
+        'target_price': _display_metric(data.get('target_price', 'N/A'), zero_is_missing=True),
         'report_date': data.get('report_date', datetime.now().strftime('%B %Y')),
-        'market_cap': data.get('market_cap', 'N/A'),
-        'fwd_pe': data.get('fwd_pe', 'N/A'),
-        'pb_ratio': data.get('pb_ratio', 'N/A'),
-        'roe': data.get('roe', 'N/A'),
-        'dividend_yield': data.get('dividend_yield', 'N/A'),
-        'week_52_range': data.get('52w_range', data.get('week_52_range', 'N/A')),
+        'market_cap': _display_metric(data.get('market_cap', 'N/A'), zero_is_missing=True),
+        'fwd_pe': _display_metric(data.get('fwd_pe', 'N/A'), zero_is_missing=True),
+        'pb_ratio': _display_metric(data.get('pb_ratio', 'N/A'), zero_is_missing=True),
+        'roe': _display_metric(data.get('roe', 'N/A')),
+        'dividend_yield': _display_metric(data.get('dividend_yield', 'N/A')),
+        'week_52_range': _display_metric(data.get('52w_range', data.get('week_52_range', 'N/A'))),
         'tagline': raw_tagline,
         'investment_thesis_section_html': investment_thesis_section_html,
         'company_overview_section_html': company_overview_section_html,
         'company_overview': company_overview_html,
         'investment_overview': investment_overview_html,
-        'revenue_analysis_text': data.get('revenue_analysis_text', 'Revenue analysis demonstrates the company\'s financial performance over the analysis period.'),
+        'revenue_analysis_text': data.get('revenue_analysis_text', '收入分析用于观察公司在报告期内的增长质量和经营表现。'),
         'revenue_key_figures_html': format_key_figures_html(data.get('revenue_key_figures', {})),
         'revenue_chart_path': data.get('revenue_chart_path', ''),
-        'revenue_chart_html': _chart_card('Revenue & EBITDA Chart', data.get('revenue_chart_path', ''), 'Source: Company Filings'),
-        'eps_analysis_text': data.get('eps_analysis_text', 'Earnings analysis shows the company\'s profitability trends.'),
+        'revenue_chart_html': _chart_card('收入与 EBITDA 图表', data.get('revenue_chart_path', ''), '来源：公司财报'),
+        'eps_analysis_text': data.get('eps_analysis_text', '盈利分析用于观察公司的利润质量、每股收益变化和估值倍数压力。'),
         'eps_key_figures_html': format_key_figures_html(data.get('eps_key_figures', {})),
         'eps_pe_chart_path': data.get('eps_pe_chart_path', ''),
-        'eps_pe_chart_html': _chart_card('EPS & PE Chart', data.get('eps_pe_chart_path', ''), 'Source: Company Filings'),
+        'eps_pe_chart_html': _chart_card('EPS 与 P/E 图表', data.get('eps_pe_chart_path', ''), '来源：公司财报'),
         'valuation_overview': valuation_overview_html,
         'valuation_breakdown_html': format_valuation_breakdown_html(data.get('valuation_analysis', {})),
         'peer_ev_ebitda_table_html': peer_ev_table_html,
         'peer_valuation_section_html': peer_valuation_section_html,
         'ev_ebitda_chart_path': data.get('ev_ebitda_chart_path', ''),
-        'ev_ebitda_chart_html': _chart_card('EV/EBITDA Peer Comparison', data.get('ev_ebitda_chart_path', ''), 'EV/EBITDA Peer Comparison'),
+        'ev_ebitda_chart_html': _chart_card('同行 EV/EBITDA 对比', data.get('ev_ebitda_chart_path', ''), '同行 EV/EBITDA 对比'),
         'news_summary': news_summary_html,
         'news_section_html': news_section_html,
         'retail_sentiment_html': retail_sentiment_html,
@@ -1205,7 +1243,7 @@ def render_professional_html_report(data: dict) -> str:
         'financial_data_section_html': financial_data_section_html,
         'credit_cashflow_table_html': credit_cashflow_table_html,
         'credit_cashflow_section_html': credit_cashflow_section_html,
-        'disclaimer_text': data.get('disclaimer_text', 'This report is for informational purposes only and does not constitute investment advice.'),
+        'disclaimer_text': data.get('disclaimer_text', '本报告仅供信息参考，不构成投资建议。'),
         'data_source_text': data.get('data_source_text', 'Company Filings, FMP API'),
         'research_source': data.get('research_source', 'AI4Finance FinRobot'),
         'report_generated_time': datetime.now().strftime('%Y-%m-%d %H:%M'),
@@ -1215,7 +1253,7 @@ def render_professional_html_report(data: dict) -> str:
         return HTML_PROFESSIONAL_TEMPLATE.format(**report_data)
     except KeyError as e:
         print(f"Error rendering professional HTML: Missing key {e}")
-        return f"<html><body><h1>Error rendering report</h1><p>Missing data: {e}</p></body></html>"
+        return f"<html><body><h1>报告渲染失败</h1><p>缺少数据：{e}</p></body></html>"
     except Exception as e:
         print(f"Error rendering professional HTML: {e}")
-        return f"<html><body><h1>Error rendering report</h1><p>Error: {e}</p></body></html>"
+        return f"<html><body><h1>报告渲染失败</h1><p>错误：{e}</p></body></html>"

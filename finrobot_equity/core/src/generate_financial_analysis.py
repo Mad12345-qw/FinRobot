@@ -450,15 +450,15 @@ def main():
                     # Fallback validation can remain here as a safety net
                     if text_type == "competitor_analysis" and (not generated_text or len(generated_text.split('.')) < 3):
                          print(f"⚠️ Warning: Competitor analysis seems too short, using fallback.")
-                         generated_text = f"{args.company_name} demonstrates competitive positioning within its industry sector through consistent financial performance and strategic market positioning relative to key competitors."
+                         generated_text = f"{args.company_name} 在所属行业中需要结合收入规模、利润率、现金流质量和估值倍数进行同行比较。若本次同行数据不完整，应优先关注与核心竞争对手在增长速度、盈利能力和资本开支效率上的差异。"
                     
-                    elif text_type == "major_takeaways" and "Revenue Growth:" not in generated_text:
+                    elif text_type == "major_takeaways" and (not generated_text or len(generated_text.strip()) < 80):
                          print(f"⚠️ Warning: Major takeaways missing required sections, using fallback.")
-                         generated_text = f"Revenue Growth: {args.company_name}'s revenue growth shows consistent performance trends.\n\nGross Profit Margin: {args.company_name}'s gross profit margins demonstrate operational effectiveness.\n\nSG&A Expense Margin: {args.company_name}'s SG&A expense management shows disciplined cost control.\n\nEBITDA Margin Stability: {args.company_name}'s EBITDA margin stability reflects strong underlying fundamentals."
+                         generated_text = f"收入增长：{args.company_name} 的收入趋势需要结合历史增速、管理层指引和行业需求判断其可持续性。\n\n利润率质量：{args.company_name} 的毛利率/贡献利润率应重点观察产品结构、定价能力和成本效率。\n\n费用效率：{args.company_name} 的 SG&A 费用率需要与收入增长同步分析，判断投入是否有效转化为规模扩张。\n\nEBITDA 稳定性：{args.company_name} 的 EBITDA 利润率是判断盈利质量、同行位置和估值支撑的重要指标。"
 
                     elif text_type == "news_summary" and (not generated_text or len(generated_text.split()) < 50):
                         print(f"⚠️ Warning: News summary seems too short, using fallback.")
-                        generated_text = f"Recent news coverage for {args.company_name} reflects ongoing market interest and developments in the company's operations and strategic initiatives."
+                        generated_text = f"{args.company_name} 的近期新闻覆盖不足以形成完整事件链。本次报告保留新闻模块，但结论应以财务数据、估值模型和同行比较为主；后续可补充公告、财报电话会和重大业务进展来更新判断。"
 
                     file_path = os.path.join(text_output_dir, f"{text_type}.txt")
                     with open(file_path, "w", encoding="utf-8") as f:
@@ -468,7 +468,7 @@ def main():
                 except Exception as e:
                     print(f"Error generating text for '{text_type}': {e}")
                     # Create a fallback file if generation fails
-                    fallback_text = f"{args.company_name} ({args.company_ticker}) {text_type.replace('_', ' ')} analysis not available."
+                    fallback_text = f"{args.company_name} ({args.company_ticker}) 的{text_type.replace('_', ' ')}模块本次未生成有效内容，请检查模型返回、数据源覆盖或重试该任务。"
                     file_path = os.path.join(text_output_dir, f"{text_type}.txt")
                     with open(file_path, "w", encoding="utf-8") as f:
                         f.write(fallback_text)
