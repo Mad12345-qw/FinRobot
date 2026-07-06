@@ -174,7 +174,12 @@ def _yf_statement_row(statement: pd.DataFrame, labels: list[str]):
     normalized_labels = ["".join(label.lower().split()) for label in labels]
     for idx in statement.index:
         normalized_idx = "".join(str(idx).lower().split())
-        if normalized_idx in normalized_labels or any(label in normalized_idx for label in normalized_labels):
+        if normalized_idx in normalized_labels:
+            return statement.loc[idx]
+    fuzzy_labels = [label for label in normalized_labels if len(label) >= 10]
+    for idx in statement.index:
+        normalized_idx = "".join(str(idx).lower().split())
+        if any(label in normalized_idx for label in fuzzy_labels):
             return statement.loc[idx]
     return None
 
@@ -194,20 +199,129 @@ def _yf_value(row, column):
         return value
 
 
+def _get_yfinance_statement(yf_ticker, period: str, statement_type: str) -> pd.DataFrame:
+    if statement_type == "income":
+        candidates = (
+            ("financials", lambda: yf_ticker.financials if period == "annual" else yf_ticker.quarterly_financials),
+            ("income_stmt", lambda: yf_ticker.income_stmt if period == "annual" else yf_ticker.quarterly_income_stmt),
+            ("get_income_stmt", lambda: yf_ticker.get_income_stmt(freq="yearly" if period == "annual" else "quarterly")),
+        )
+    elif statement_type == "balance":
+        candidates = (
+            ("balance_sheet", lambda: yf_ticker.balance_sheet if period == "annual" else yf_ticker.quarterly_balance_sheet),
+            ("get_balance_sheet", lambda: yf_ticker.get_balance_sheet(freq="yearly" if period == "annual" else "quarterly")),
+        )
+    else:
+        candidates = (
+            ("cashflow", lambda: yf_ticker.cashflow if period == "annual" else yf_ticker.quarterly_cashflow),
+            ("get_cash_flow", lambda: yf_ticker.get_cash_flow(freq="yearly" if period == "annual" else "quarterly")),
+        )
+
+    for name, getter in candidates:
+        try:
+            statement = getter()
+        except Exception as e:
+            print(f"yfinance {name} failed: {e}")
+            continue
+        if statement is not None and not statement.empty:
+            return statement
+    return pd.DataFrame()
+
+
+def _get_yfinance_info(yf_ticker) -> dict:
+    for getter in (lambda: yf_ticker.info, lambda: yf_ticker.get_info()):
+        try:
+            info = getter()
+        except Exception as e:
+            print(f"yfinance info failed: {e}")
+            continue
+        if isinstance(info, dict) and info:
+            return info
+    return {}
+
+
+def _build_yfinance_info_financial_data(ticker: str, yf_ticker, finnhub_api_key: str | None = None) -> dict | None:
+    info = _get_yfinance_info(yf_ticker)
+    revenue = info.get("totalRevenue")
+    if revenue is None:
+        return None
+
+    latest_year = datetime.datetime.now().year
+    latest_date = f"{latest_year}-12-31"
+    gross_profit = info.get("grossProfits")
+    gross_margin = info.get("grossMargins")
+    if gross_profit is None and gross_margin is not None:
+        gross_profit = float(revenue) * float(gross_margin)
+    ebitda = info.get("ebitda")
+    operating_margins = info.get("operatingMargins")
+    operating_income = None
+    if operating_margins is not None:
+        operating_income = float(revenue) * float(operating_margins)
+    eps = info.get("trailingEps") or info.get("forwardEps")
+
+    metric = {}
+    if finnhub_api_key:
+        metric_data = _get_finnhub_json(
+            f"https://finnhub.io/api/v1/stock/metric?symbol={ticker}&metric=all&token={finnhub_api_key}",
+            f"metrics for {ticker}"
+        ) or {}
+        metric = metric_data.get("metric") or {}
+
+    pe_ratio = metric.get("peAnnual") or metric.get("peTTM") or metric.get("forwardPE") or info.get("trailingPE") or info.get("forwardPE")
+    ev_ebitda = metric.get("evEbitdaTTM") or info.get("enterpriseToEbitda")
+    pb_ratio = metric.get("pbAnnual") or metric.get("pbQuarterly") or info.get("priceToBook")
+    roe = metric.get("roeTTM") or metric.get("roeRfy") or info.get("returnOnEquity")
+    if roe is not None and abs(float(roe)) > 1:
+        roe = float(roe) / 100
+
+    income_df = pd.DataFrame([{
+        "date": pd.to_datetime(latest_date),
+        "year": latest_year,
+        "revenue": revenue,
+        "costOfRevenue": None,
+        "grossProfit": gross_profit,
+        "sellingGeneralAndAdministrativeExpenses": None,
+        "operatingIncome": operating_income,
+        "ebitda": ebitda,
+        "eps": eps,
+    }])
+    return {
+        "income_statement": income_df,
+        "balance_sheet": pd.DataFrame([{"date": pd.to_datetime(latest_date), "year": latest_year}]),
+        "cash_flow": pd.DataFrame([{"date": pd.to_datetime(latest_date), "year": latest_year, "depreciationAndAmortization": None}]),
+        "ratios": pd.DataFrame([{
+            "date": latest_date,
+            "year": latest_year,
+            "priceEarningsRatio": pe_ratio,
+            "peRatio": pe_ratio,
+            "priceToBookRatio": pb_ratio,
+            "returnOnEquity": roe,
+        }]),
+        "key_metrics": pd.DataFrame([{
+            "date": latest_date,
+            "year": latest_year,
+            "peRatio": pe_ratio,
+            "evToEBITDA": ev_ebitda,
+            "enterpriseValueOverEBITDA": ev_ebitda,
+            "pbRatio": pb_ratio,
+        }]),
+    }
+
+
 def get_yfinance_financial_data(ticker: str, period: str = "annual", limit: int = 5, finnhub_api_key: str | None = None) -> dict | None:
     """Build minimal FinRobot-compatible financial tables from yfinance."""
     try:
         yf_ticker = yf.Ticker(ticker)
-        income_raw = yf_ticker.financials if period == "annual" else yf_ticker.quarterly_financials
-        balance_raw = yf_ticker.balance_sheet if period == "annual" else yf_ticker.quarterly_balance_sheet
-        cash_raw = yf_ticker.cashflow if period == "annual" else yf_ticker.quarterly_cashflow
+        income_raw = _get_yfinance_statement(yf_ticker, period, "income")
+        balance_raw = _get_yfinance_statement(yf_ticker, period, "balance")
+        cash_raw = _get_yfinance_statement(yf_ticker, period, "cash")
     except Exception as e:
         print(f"Error fetching yfinance financial statements for {ticker}: {e}")
         return None
 
     if income_raw is None or income_raw.empty:
-        print(f"No yfinance income statement data for {ticker}.")
-        return None
+        print(f"No yfinance income statement data for {ticker}; falling back to yfinance quote summary metrics.")
+        return _build_yfinance_info_financial_data(ticker, yf_ticker, finnhub_api_key=finnhub_api_key)
 
     columns = list(income_raw.columns)[:limit]
     revenue_row = _yf_statement_row(income_raw, ["Total Revenue", "Operating Revenue", "Revenue"])
