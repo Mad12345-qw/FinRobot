@@ -497,6 +497,7 @@ def main():
     try:
         config = load_config(args.config_file)
         fmp_api_key = get_api_key(config, "API_KEYS", "fmp_api_key")
+        finnhub_api_key = config.get("API_KEYS", "finnhub_api_key", fallback=os.getenv("FINNHUB_API_KEY", ""))
         if args.enable_text_regeneration:
             try:
                 openai_api_key = get_api_key(config, "API_KEYS", "openai_api_key")
@@ -507,13 +508,14 @@ def main():
     except Exception as e:
         print(f"Warning: Could not load FMP API key: {e}")
         fmp_api_key = None
+        finnhub_api_key = os.getenv("FINNHUB_API_KEY", "")
 
     # --- Auto-fetch market data if not provided and API key available ---
     auto_fetched_metrics = {}
-    if not args.skip_auto_fetch and fmp_api_key:
+    if not args.skip_auto_fetch and (fmp_api_key or finnhub_api_key):
         print(f"Auto-fetching market data for {args.company_ticker}...")
         try:
-            auto_fetched_metrics = get_comprehensive_company_metrics(args.company_ticker, fmp_api_key)
+            auto_fetched_metrics = get_comprehensive_company_metrics(args.company_ticker, fmp_api_key, finnhub_api_key=finnhub_api_key)
             print("✅ Successfully auto-fetched market data")
             # Validate market cap vs share price consistency
             try:
@@ -533,7 +535,7 @@ def main():
     elif args.skip_auto_fetch:
         print("Skipping auto-fetch as requested")
     else:
-        print("⚠️  No FMP API key found, skipping auto-fetch")
+        print("⚠️  No FMP/Finnhub API key found, skipping auto-fetch")
 
     # --- Determine final values (command line args override auto-fetched) ---
     def get_value(arg_value, auto_key, default_value, format_func=None, zero_is_missing: bool = False):

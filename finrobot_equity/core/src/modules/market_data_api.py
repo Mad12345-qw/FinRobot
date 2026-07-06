@@ -594,7 +594,103 @@ def get_fmp_market_cap(ticker: str, api_key: str) -> float | None:
         print(f"Error processing market cap data for {ticker}: {e}")
         return None
 
-def get_comprehensive_company_metrics(ticker: str, api_key: str) -> dict:
+
+def _derive_finnhub_rating(recommendations: list[dict] | None) -> str | None:
+    if not recommendations:
+        return None
+    latest = recommendations[0]
+    strong_buy = int(latest.get("strongBuy") or 0)
+    buy = int(latest.get("buy") or 0)
+    hold = int(latest.get("hold") or 0)
+    sell = int(latest.get("sell") or 0)
+    strong_sell = int(latest.get("strongSell") or 0)
+    bullish = strong_buy + buy
+    bearish = sell + strong_sell
+    if bullish > hold + bearish:
+        return "Buy"
+    if bearish > bullish:
+        return "Sell"
+    if hold > 0:
+        return "Hold"
+    return None
+
+
+def get_finnhub_company_metrics(ticker: str, api_key: str) -> dict:
+    """Fetch quote/profile/valuation snapshot metrics from Finnhub."""
+    metrics = {}
+    if not api_key:
+        return metrics
+
+    quote = _get_finnhub_json(
+        f"https://finnhub.io/api/v1/quote?symbol={ticker}&token={api_key}",
+        f"quote for {ticker}"
+    ) or {}
+    if quote.get("c"):
+        metrics["share_price"] = float(quote["c"])
+
+    profile = _get_finnhub_json(
+        f"https://finnhub.io/api/v1/stock/profile2?symbol={ticker}&token={api_key}",
+        f"profile for {ticker}"
+    ) or {}
+    if profile:
+        market_cap_m = profile.get("marketCapitalization")
+        if market_cap_m:
+            metrics["market_cap"] = float(market_cap_m) / 1000
+        if profile.get("shareOutstanding"):
+            metrics["shares_outstanding"] = float(profile["shareOutstanding"]) * 1e6
+        metrics["sector"] = profile.get("finnhubIndustry")
+        metrics["industry"] = profile.get("finnhubIndustry")
+        metrics["exchange"] = profile.get("exchange")
+
+    metric_data = _get_finnhub_json(
+        f"https://finnhub.io/api/v1/stock/metric?symbol={ticker}&metric=all&token={api_key}",
+        f"metrics for {ticker}"
+    ) or {}
+    metric = metric_data.get("metric") or {}
+    if metric:
+        metrics["beta"] = metric.get("beta")
+        metrics["fwd_pe"] = metric.get("forwardPE") or metric.get("peAnnual") or metric.get("peTTM")
+        metrics["pb_ratio"] = (
+            metric.get("pbAnnual")
+            or metric.get("pbQuarterly")
+            or metric.get("priceToBookAnnual")
+            or metric.get("priceToBookQuarterly")
+        )
+        roe = metric.get("roeTTM") or metric.get("roeRfy") or metric.get("returnOnEquityTTM")
+        if roe is not None:
+            metrics["roe"] = float(roe) * 100 if abs(float(roe)) < 1 else float(roe)
+        dividend_yield = (
+            metric.get("dividendYieldIndicatedAnnual")
+            or metric.get("dividendYield5Y")
+            or metric.get("currentDividendYieldTTM")
+        )
+        if dividend_yield is not None:
+            metrics["dividend_yield"] = float(dividend_yield)
+        high_52 = metric.get("52WeekHigh")
+        low_52 = metric.get("52WeekLow")
+        if high_52 is not None and low_52 is not None:
+            metrics["52w_range"] = f"${float(low_52):.2f} - ${float(high_52):.2f}"
+
+    recommendations = _get_finnhub_json(
+        f"https://finnhub.io/api/v1/stock/recommendation?symbol={ticker}&token={api_key}",
+        f"recommendations for {ticker}"
+    )
+    rating = _derive_finnhub_rating(recommendations if isinstance(recommendations, list) else None)
+    if rating:
+        metrics["rating"] = rating
+
+    target = _get_finnhub_json(
+        f"https://finnhub.io/api/v1/stock/price-target?symbol={ticker}&token={api_key}",
+        f"price target for {ticker}"
+    ) or {}
+    target_price = target.get("targetMean") or target.get("targetMedian") or target.get("targetHigh")
+    if target_price:
+        metrics["target_price"] = float(target_price)
+
+    return {k: v for k, v in metrics.items() if v is not None}
+
+
+def get_comprehensive_company_metrics(ticker: str, api_key: str, finnhub_api_key: str | None = None) -> dict:
     """Fetches all key company metrics needed for equity report from FMP API."""
     print(f"Fetching comprehensive company metrics for {ticker}...")
     
@@ -715,6 +811,12 @@ def get_comprehensive_company_metrics(ticker: str, api_key: str) -> dict:
         metrics['sector'] = 'Technology'  # Default for many stocks
     if metrics['rating'] is None:
         metrics['rating'] = 'N/A'
+
+    if finnhub_api_key:
+        finnhub_metrics = get_finnhub_company_metrics(ticker, finnhub_api_key)
+        for key, value in finnhub_metrics.items():
+            if metrics.get(key) in (None, 'N/A'):
+                metrics[key] = value
     
     print(f"Successfully fetched metrics for {ticker}")
     return metrics
