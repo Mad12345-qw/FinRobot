@@ -45,10 +45,45 @@ def _is_conclusion_sentence(text: str) -> bool:
     return any(lower.startswith(s) for s in conclusion_starters)
 
 
+def _localize_report_markdown(text: str) -> str:
+    """Localize common generated report headings before markdown rendering."""
+    if not text:
+        return text
+    replacements = {
+        "Sensitivity Analysis Summary": "敏感性分析摘要",
+        "Key Assumptions": "核心假设",
+        "Confidence Intervals": "置信区间",
+        "Sensitivity Notes": "敏感性说明",
+        "Catalyst Analysis": "催化因素分析",
+        "Positive Catalysts": "正面催化因素",
+        "Risk Factors": "风险因素",
+        "Downside Risks": "下行风险",
+        "Upside Potential": "上行潜力",
+        "Events to Monitor": "待跟踪事件",
+        "Investment Thesis": "投资观点",
+        "Company Overview": "公司概览",
+        "Financial Analysis": "财务表现分析",
+        "Valuation Analysis": "估值分析",
+        "Key Takeaways": "核心结论",
+        "Revenue Growth": "收入增长",
+        "Gross Profit Margin": "毛利率",
+        "SG&A Expense Margin": "SG&A 费用率",
+        "EBITDA Margin Stability": "EBITDA 利润率稳定性",
+        "Potential Impact": "潜在影响",
+        "Mitigation": "应对方式",
+        "Impact": "影响",
+        "Probability": "概率",
+    }
+    for source, target in replacements.items():
+        text = text.replace(source, target)
+    return text
+
+
 def _markdown_to_html(text: str) -> str:
     """将 markdown 文本转换为 HTML，支持标题、粗体、列表等。自动加粗关键数据。"""
     if not text:
         return ""
+    text = _localize_report_markdown(text)
     lines = text.split('\n')
     html_lines = []
     in_list = False
