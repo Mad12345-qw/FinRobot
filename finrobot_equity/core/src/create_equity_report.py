@@ -40,6 +40,8 @@ from modules.enhanced_text_generator import EnhancedTextGenerator
 
 def _to_report_relative_asset_path(path: str, output_dir: str) -> str:
     """Use relative asset paths so generated HTML works after being served over HTTP."""
+    if isinstance(path, dict):
+        path = path.get("png") or path.get("path") or path.get("html") or path.get("pdf") or ""
     if not path:
         return ""
     path = str(path)
@@ -67,6 +69,12 @@ def _normalize_html_asset_paths(report_data: dict, output_dir: str) -> None:
     ]:
         if report_data.get(key):
             report_data[key] = _to_report_relative_asset_path(report_data[key], output_dir)
+
+
+def _chart_result_path(result) -> str:
+    if isinstance(result, dict):
+        return result.get("png") or result.get("path") or result.get("html") or result.get("pdf") or ""
+    return result or ""
 
 
 def load_credit_cashflow_metrics_from_csv(file_path: str) -> pd.DataFrame:
@@ -783,7 +791,7 @@ def main():
             }
             for chart_key, data_key in chart_field_map.items():
                 if enhanced_charts.get(chart_key):
-                    report_data[data_key] = enhanced_charts[chart_key]
+                    report_data[data_key] = _chart_result_path(enhanced_charts[chart_key])
 
             report_data['enhanced_charts'] = enhanced_charts
             print(f"✅ Generated {len(enhanced_charts)} enhanced charts total")
