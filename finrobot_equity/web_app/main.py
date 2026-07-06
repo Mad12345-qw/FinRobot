@@ -513,18 +513,67 @@ KNOWN_COMPANY_NAMES = {
     "WFC": "Wells Fargo & Company",
 }
 
+COMPANY_ALIAS_TICKERS = {
+    "Alphabet": "GOOGL",
+    "Facebook": "META",
+    "Google": "GOOGL",
+    "Meta": "META",
+    "Sea Limited": "SE",
+    "Shopee": "SE",
+    "亚马逊": "AMZN",
+    "京东": "JD",
+    "微软": "MSFT",
+    "摩根大通": "JPM",
+    "拼多多": "PDD",
+    "特斯拉": "TSLA",
+    "美国银行": "BAC",
+    "英伟达": "NVDA",
+    "苹果": "AAPL",
+    "花旗": "C",
+    "谷歌": "GOOGL",
+    "阿里": "BABA",
+    "阿里巴巴": "BABA",
+}
+
 
 def extract_tickers_from_text(value: str) -> List[str]:
     tickers = []
     for match in re.finditer(r"(?<![A-Za-z0-9.\-])([A-Za-z][A-Za-z0-9.\-]{0,9})(?![A-Za-z0-9.\-])", value or ""):
-        ticker = match.group(1).upper().strip(".-")
+        raw_ticker = match.group(1)
+        ticker = raw_ticker.upper().strip(".-")
         if (
-            re.match(r"^[A-Z][A-Z0-9.\-]{0,9}$", ticker)
+            (raw_ticker == raw_ticker.upper() or ticker in KNOWN_COMPANY_NAMES)
+            and (len(ticker) > 1 or ticker in KNOWN_COMPANY_NAMES)
+            and re.match(r"^[A-Z][A-Z0-9.\-]{0,9}$", ticker)
             and ticker not in TICKER_STOPWORDS
             and ticker not in tickers
         ):
             tickers.append(ticker)
     return tickers
+
+
+def extract_report_symbols_from_text(value: str) -> List[str]:
+    candidates = []
+    for match in re.finditer(r"(?<![A-Za-z0-9.\-])([A-Za-z][A-Za-z0-9.\-]{0,9})(?![A-Za-z0-9.\-])", value or ""):
+        raw_ticker = match.group(1)
+        ticker = raw_ticker.upper().strip(".-")
+        if (
+            (raw_ticker == raw_ticker.upper() or ticker in KNOWN_COMPANY_NAMES)
+            and (len(ticker) > 1 or ticker in KNOWN_COMPANY_NAMES)
+            and re.match(r"^[A-Z][A-Z0-9.\-]{0,9}$", ticker)
+            and ticker not in TICKER_STOPWORDS
+        ):
+            candidates.append((match.start(), ticker))
+
+    for alias, ticker in COMPANY_ALIAS_TICKERS.items():
+        for match in re.finditer(re.escape(alias), value or "", flags=re.IGNORECASE):
+            candidates.append((match.start(), ticker))
+
+    symbols = []
+    for _, ticker in sorted(candidates, key=lambda item: item[0]):
+        if ticker not in symbols:
+            symbols.append(ticker)
+    return symbols
 
 
 def build_analysis_request(ticker: str, company_name: str = "", peers: Optional[List[str]] = None) -> Optional[AnalysisRequest]:
@@ -570,7 +619,7 @@ def parse_command_report_request(clean_text: str, lower_text: str) -> Optional[A
 
             ticker = re.sub(r"[^A-Za-z0-9.\-]", "", tokens[0]).upper()
             company_name = " ".join(tokens[1:]).strip()
-            peers = extract_tickers_from_text(peer_part)
+            peers = extract_report_symbols_from_text(peer_part)
             return build_analysis_request(ticker, company_name, peers)
     return None
 
@@ -583,17 +632,17 @@ def parse_natural_report_request(clean_text: str) -> Optional[AnalysisRequest]:
     ):
         return None
 
-    tickers = extract_tickers_from_text(clean_text)
-    if not tickers:
+    symbols = extract_report_symbols_from_text(clean_text)
+    if not symbols:
         return None
 
-    ticker = tickers[0]
+    ticker = symbols[0]
     peer_text = ""
     peer_match = re.search(r"(?:\||同行|对比|比较|竞品|peer(?:s)?|vs\.?|versus)[：:\s]*(.+)$", clean_text, flags=re.IGNORECASE)
     if peer_match:
         peer_text = peer_match.group(1)
 
-    peers = extract_tickers_from_text(peer_text) if peer_text else tickers[1:]
+    peers = extract_report_symbols_from_text(peer_text) if peer_text else symbols[1:]
     return build_analysis_request(ticker, KNOWN_COMPANY_NAMES.get(ticker, ticker), peers)
 
 
