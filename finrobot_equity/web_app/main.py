@@ -1446,6 +1446,11 @@ def reserve_feishu_task(payload: Dict, message: Dict, text: str, req: AnalysisRe
     return task_id, True
 
 
+@app.get("/api/ping")
+async def ping():
+    return Response(content="ok", media_type="text/plain")
+
+
 @app.get("/api/health")
 async def health_check():
     return {
